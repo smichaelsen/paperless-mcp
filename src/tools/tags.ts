@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toTextResult } from "./result";
 
 export function registerTagTools(server, api) {
   server.tool(
@@ -8,7 +9,7 @@ export function registerTagTools(server, api) {
     // No parameters - returns all available tags
   }, async (args, extra) => {
     if (!api) throw new Error("Please configure API connection first");
-    return api.getTags();
+    return toTextResult(await api.getTags());
   });
 
   server.tool(
@@ -25,7 +26,7 @@ export function registerTagTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.createTag(args);
+      return toTextResult(await api.createTag(args));
     }
   );
 
@@ -44,7 +45,7 @@ export function registerTagTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.updateTag(args.id, args);
+      return toTextResult(await api.updateTag(args.id, args));
     }
   );
 
@@ -56,7 +57,7 @@ export function registerTagTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.deleteTag(args.id);
+      return toTextResult(await api.deleteTag(args.id));
     }
   );
 
@@ -83,17 +84,19 @@ export function registerTagTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.bulkEditObjects(
-        args.tag_ids,
-        "tags",
-        args.operation,
-        args.operation === "set_permissions"
-          ? {
-              owner: args.owner,
-              permissions: args.permissions,
-              merge: args.merge,
-            }
-          : {}
+      return toTextResult(
+        await api.bulkEditObjects(
+          args.tag_ids,
+          "tags",
+          args.operation,
+          args.operation === "set_permissions"
+            ? {
+                owner: args.owner,
+                permissions: args.permissions,
+                merge: args.merge,
+              }
+            : {}
+        )
       );
     }
   );
