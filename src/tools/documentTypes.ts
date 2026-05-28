@@ -1,16 +1,29 @@
 import { z } from "zod";
 import { toTextResult } from "./result";
+import { buildPaginationQuery, paginationParams } from "./pagination";
 
 export function registerDocumentTypeTools(server, api) {
   server.tool(
     "list_document_types",
-    "Retrieve all available document types for categorizing documents by purpose or format (Invoice, Receipt, Contract, etc.). Returns names and automatic matching rules.",
+    "Retrieve available document types for categorizing documents by purpose or format (Invoice, Receipt, Contract, etc.). Returns names and automatic matching rules. Results are paginated (25 per page by default); use page/page_size to enumerate large collections.",
     {
-    // No parameters - returns all available document types
-  }, async (args, extra) => {
+      ...paginationParams,
+    }, async (args, extra) => {
     if (!api) throw new Error("Please configure API connection first");
-    return toTextResult(await api.getDocumentTypes());
+    return toTextResult(await api.getDocumentTypes(buildPaginationQuery(args)));
   });
+
+  server.tool(
+    "get_document_type",
+    "Retrieve a single document type by its ID, including its name and matching rules. Useful for resolving a document type name from an ID referenced by a document when it is not on the first page of list_document_types.",
+    {
+      id: z.number().describe("ID of the document type to retrieve. Document objects reference document types by these IDs."),
+    },
+    async (args, extra) => {
+      if (!api) throw new Error("Please configure API connection first");
+      return toTextResult(await api.getDocumentType(args.id));
+    }
+  );
 
   server.tool(
     "create_document_type",

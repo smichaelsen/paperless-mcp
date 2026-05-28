@@ -1,16 +1,29 @@
 import { z } from "zod";
 import { toTextResult } from "./result";
+import { buildPaginationQuery, paginationParams } from "./pagination";
 
 export function registerTagTools(server, api) {
   server.tool(
     "list_tags",
-    "Retrieve all available tags for labeling and organizing documents. Returns tag names, colors, and matching rules for automatic assignment.",
+    "Retrieve available tags for labeling and organizing documents. Returns tag names, colors, and matching rules for automatic assignment. Results are paginated (25 per page by default); use page/page_size to enumerate large tag collections.",
     {
-    // No parameters - returns all available tags
-  }, async (args, extra) => {
+      ...paginationParams,
+    }, async (args, extra) => {
     if (!api) throw new Error("Please configure API connection first");
-    return toTextResult(await api.getTags());
+    return toTextResult(await api.getTags(buildPaginationQuery(args)));
   });
+
+  server.tool(
+    "get_tag",
+    "Retrieve a single tag by its ID, including its name, color, and matching rules. Useful for resolving a tag name from an ID referenced by a document when the tag is not on the first page of list_tags.",
+    {
+      id: z.number().describe("ID of the tag to retrieve. Document objects reference tags by these IDs."),
+    },
+    async (args, extra) => {
+      if (!api) throw new Error("Please configure API connection first");
+      return toTextResult(await api.getTag(args.id));
+    }
+  );
 
   server.tool(
     "create_tag",
