@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toTextResult } from "./result";
 
 export function registerDocumentTypeTools(server, api) {
   server.tool(
@@ -8,7 +9,7 @@ export function registerDocumentTypeTools(server, api) {
     // No parameters - returns all available document types
   }, async (args, extra) => {
     if (!api) throw new Error("Please configure API connection first");
-    return api.getDocumentTypes();
+    return toTextResult(await api.getDocumentTypes());
   });
 
   server.tool(
@@ -23,7 +24,7 @@ export function registerDocumentTypeTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.createDocumentType(args);
+      return toTextResult(await api.createDocumentType(args));
     }
   );
 
@@ -50,17 +51,19 @@ export function registerDocumentTypeTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.bulkEditObjects(
-        args.document_type_ids,
-        "document_types",
-        args.operation,
-        args.operation === "set_permissions"
-          ? {
-              owner: args.owner,
-              permissions: args.permissions,
-              merge: args.merge,
-            }
-          : {}
+      return toTextResult(
+        await api.bulkEditObjects(
+          args.document_type_ids,
+          "document_types",
+          args.operation,
+          args.operation === "set_permissions"
+            ? {
+                owner: args.owner,
+                permissions: args.permissions,
+                merge: args.merge,
+              }
+            : {}
+        )
       );
     }
   );

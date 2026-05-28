@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
+import { toTextResult } from "./result";
 
 export function registerCorrespondentTools(server: McpServer, api) {
   server.tool(
@@ -7,7 +8,7 @@ export function registerCorrespondentTools(server: McpServer, api) {
     "Retrieve all available correspondents (people, companies, organizations that send/receive documents). Returns names and automatic matching patterns for document assignment.",
     { }, async (args, extra) => {
     if (!api) throw new Error("Please configure API connection first");
-    return api.getCorrespondents();
+    return toTextResult(await api.getCorrespondents());
   });
 
   server.tool(
@@ -22,7 +23,7 @@ export function registerCorrespondentTools(server: McpServer, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.createCorrespondent(args);
+      return toTextResult(await api.createCorrespondent(args));
     }
   );
 
@@ -49,17 +50,19 @@ export function registerCorrespondentTools(server: McpServer, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.bulkEditObjects(
-        args.correspondent_ids,
-        "correspondents",
-        args.operation,
-        args.operation === "set_permissions"
-          ? {
-              owner: args.owner,
-              permissions: args.permissions,
-              merge: args.merge,
-            }
-          : {}
+      return toTextResult(
+        await api.bulkEditObjects(
+          args.correspondent_ids,
+          "correspondents",
+          args.operation,
+          args.operation === "set_permissions"
+            ? {
+                owner: args.owner,
+                permissions: args.permissions,
+                merge: args.merge,
+              }
+            : {}
+        )
       );
     }
   );

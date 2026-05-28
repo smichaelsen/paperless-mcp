@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toTextResult } from "./result";
 
 export function registerDocumentTools(server, api) {
   server.tool(
@@ -53,7 +54,7 @@ export function registerDocumentTools(server, api) {
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
       const { documents, method, ...parameters } = args;
-      return api.bulkEditDocuments(documents, method, parameters);
+      return toTextResult(await api.bulkEditDocuments(documents, method, parameters));
     }
   );
 
@@ -78,7 +79,7 @@ export function registerDocumentTools(server, api) {
       const blob = new Blob([binaryData]);
       const file = new File([blob], args.filename);
       const { file: _, filename: __, ...metadata } = args;
-      return api.postDocument(file, metadata);
+      return toTextResult(await api.postDocument(file, metadata));
     }
   );
 
@@ -91,7 +92,7 @@ export function registerDocumentTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.getDocument(args.id);
+      return toTextResult(await api.getDocument(args.id));
     }
   );
 
@@ -114,7 +115,7 @@ export function registerDocumentTools(server, api) {
       if (Object.keys(data).length === 0) {
         throw new Error("At least one field must be provided to update.");
       }
-      return api.updateDocument(id, data);
+      return toTextResult(await api.updateDocument(id, data));
     }
   );
 
@@ -128,7 +129,7 @@ export function registerDocumentTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      return api.searchDocuments(args.query, args.page, args.page_size);
+      return toTextResult(await api.searchDocuments(args.query, args.page, args.page_size));
     }
   );
 
@@ -142,14 +143,14 @@ export function registerDocumentTools(server, api) {
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
       const response = await api.downloadDocument(args.id, args.original);
-      return {
+      return toTextResult({
         blob: Buffer.from(await response.arrayBuffer()).toString("base64"),
         filename:
           response.headers
             .get("content-disposition")
             ?.split("filename=")[1]
             ?.replace(/"/g, "") || `document-${args.id}`,
-      };
+      });
     }
   );
 }
