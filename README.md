@@ -255,10 +255,26 @@ post_document({
 ### Tag Operations
 
 #### list_tags
-Get all tags.
+Get tags. Results are paginated (25 per page by default).
+
+Parameters:
+- page (optional): 1-based page number to retrieve
+- page_size (optional): Number of results per page (e.g. 1000 to fetch all in one call)
 
 ```typescript
 list_tags()
+list_tags({ page: 2 })
+list_tags({ page_size: 1000 })
+```
+
+#### get_tag
+Get a single tag by ID. Useful for resolving a tag name from an ID referenced by a document when the tag is beyond the first page of `list_tags`.
+
+Parameters:
+- id: Tag ID
+
+```typescript
+get_tag({ id: 3 })
 ```
 
 #### create_tag
@@ -282,10 +298,26 @@ create_tag({
 ### Correspondent Operations
 
 #### list_correspondents
-Get all correspondents.
+Get correspondents. Results are paginated (25 per page by default).
+
+Parameters:
+- page (optional): 1-based page number to retrieve
+- page_size (optional): Number of results per page (e.g. 1000 to fetch all in one call)
 
 ```typescript
 list_correspondents()
+list_correspondents({ page: 2 })
+list_correspondents({ page_size: 1000 })
+```
+
+#### get_correspondent
+Get a single correspondent by ID. Useful for resolving a correspondent name from an ID referenced by a document when it is beyond the first page of `list_correspondents`.
+
+Parameters:
+- id: Correspondent ID
+
+```typescript
+get_correspondent({ id: 7 })
 ```
 
 #### create_correspondent
@@ -307,10 +339,26 @@ create_correspondent({
 ### Document Type Operations
 
 #### list_document_types
-Get all document types.
+Get document types. Results are paginated (25 per page by default).
+
+Parameters:
+- page (optional): 1-based page number to retrieve
+- page_size (optional): Number of results per page (e.g. 1000 to fetch all in one call)
 
 ```typescript
 list_document_types()
+list_document_types({ page: 2 })
+list_document_types({ page_size: 1000 })
+```
+
+#### get_document_type
+Get a single document type by ID. Useful for resolving a document type name from an ID referenced by a document when it is beyond the first page of `list_document_types`.
+
+Parameters:
+- id: Document type ID
+
+```typescript
+get_document_type({ id: 2 })
 ```
 
 #### create_document_type

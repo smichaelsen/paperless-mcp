@@ -150,8 +150,12 @@ export class PaperlessAPI {
   }
 
   // Tag operations
-  async getTags() {
-    return this.request("/tags/");
+  async getTags(query = "") {
+    return this.request(`/tags/${query}`);
+  }
+
+  async getTag(id) {
+    return this.request(`/tags/${id}/`);
   }
 
   async createTag(data) {
@@ -175,8 +179,12 @@ export class PaperlessAPI {
   }
 
   // Correspondent operations
-  async getCorrespondents() {
-    return this.request("/correspondents/");
+  async getCorrespondents(query = "") {
+    return this.request(`/correspondents/${query}`);
+  }
+
+  async getCorrespondent(id) {
+    return this.request(`/correspondents/${id}/`);
   }
 
   async createCorrespondent(data) {
@@ -187,8 +195,12 @@ export class PaperlessAPI {
   }
 
   // Document type operations
-  async getDocumentTypes() {
-    return this.request("/document_types/");
+  async getDocumentTypes(query = "") {
+    return this.request(`/document_types/${query}`);
+  }
+
+  async getDocumentType(id) {
+    return this.request(`/document_types/${id}/`);
   }
 
   async createDocumentType(data) {

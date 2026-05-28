@@ -1,15 +1,30 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import { toTextResult } from "./result";
+import { buildPaginationQuery, paginationParams } from "./pagination";
 
 export function registerCorrespondentTools(server: McpServer, api) {
   server.tool(
     "list_correspondents",
-    "Retrieve all available correspondents (people, companies, organizations that send/receive documents). Returns names and automatic matching patterns for document assignment.",
-    { }, async (args, extra) => {
+    "Retrieve available correspondents (people, companies, organizations that send/receive documents). Returns names and automatic matching patterns for document assignment. Results are paginated (25 per page by default); use page/page_size to enumerate large correspondent collections.",
+    {
+      ...paginationParams,
+    }, async (args, extra) => {
     if (!api) throw new Error("Please configure API connection first");
-    return toTextResult(await api.getCorrespondents());
+    return toTextResult(await api.getCorrespondents(buildPaginationQuery(args)));
   });
+
+  server.tool(
+    "get_correspondent",
+    "Retrieve a single correspondent by its ID, including its name and matching rules. Useful for resolving a correspondent name from an ID referenced by a document when it is not on the first page of list_correspondents.",
+    {
+      id: z.number().describe("ID of the correspondent to retrieve. Document objects reference correspondents by these IDs."),
+    },
+    async (args, extra) => {
+      if (!api) throw new Error("Please configure API connection first");
+      return toTextResult(await api.getCorrespondent(args.id));
+    }
+  );
 
   server.tool(
     "create_correspondent",
