@@ -26,9 +26,11 @@ export async function startApp(app: Express): Promise<RunningApp> {
     url: `http://127.0.0.1:${port}`,
     server,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve()))
-      ),
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        // An SSE stream left open would keep `close()` pending forever.
+        server.closeAllConnections();
+      }),
   };
 }
 

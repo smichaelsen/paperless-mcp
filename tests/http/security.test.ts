@@ -14,7 +14,6 @@ import {
   describeAllowlist,
   hostnameOf,
   resolveHttpSecurity,
-  transportSecurityOptions,
 } from "../../src/http/security";
 import { initializeBody, rawRequest, RunningApp, startApp } from "./harness";
 
@@ -58,23 +57,13 @@ describe("resolveHttpSecurity", () => {
     expect(hostnameOf("not a host")).toBeUndefined();
   });
 
-  it("hands configured origins down to the transport as defence in depth", () => {
-    expect(
-      transportSecurityOptions({
-        allowedHosts: DEFAULT_ALLOWED_HOSTS,
-        allowedOrigins: ["https://app.example"],
-      })
-    ).toEqual({
-      enableDnsRebindingProtection: true,
-      allowedOrigins: ["https://app.example"],
+  it("replaces the default host list rather than extending it", () => {
+    // Documented behaviour, and the reason the README example keeps the
+    // loopback names: an operator who lists only a proxy hostname loses them.
+    const config = resolveHttpSecurity({
+      [ALLOWED_HOSTS_ENV]: "paperless-mcp",
     });
-    // Nothing to enforce when every origin is rejected outright, or none is.
-    expect(
-      transportSecurityOptions({
-        allowedHosts: "any",
-        allowedOrigins: [],
-      })
-    ).toEqual({});
+    expect(config.allowedHosts).toEqual(["paperless-mcp"]);
   });
 });
 
@@ -163,6 +152,27 @@ describe("dnsRebindingProtection over HTTP", () => {
       body: initializeBody(),
     });
     expect(response.status).toBe(200);
+  });
+
+  it("matches an Origin case-insensitively, all the way through", async () => {
+    // RFC 6454 origins are case-insensitive. The SDK's transport-level check
+    // is not, which is why it is deliberately not enabled alongside this
+    // middleware — the two layers would disagree on exactly this request.
+    const app = await serve({
+      [ALLOWED_ORIGINS_ENV]: "http://good.example",
+    });
+    const response = await rawRequest({
+      port: app.port,
+      path: "/mcp",
+      headers: {
+        ...jsonHeaders,
+        host: `127.0.0.1:${app.port}`,
+        origin: "HTTP://GOOD.EXAMPLE",
+      },
+      body: initializeBody(),
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).not.toContain("GOOD.EXAMPLE");
   });
 
   it("accepts a configured non-loopback Host", async () => {

@@ -65,8 +65,14 @@ function parseList(raw: string | undefined): string[] | "any" | undefined {
 }
 
 /**
- * Resolve the Host/Origin allowlists from the environment. Unset — or set to an
- * empty/blank string — means "use the default".
+ * Resolve the Host/Origin allowlists from the environment.
+ *
+ * A configured list **replaces** the default, it does not extend it: setting
+ * `PAPERLESS_MCP_ALLOWED_HOSTS` to a proxy hostname alone stops loopback
+ * clients from connecting, so keep the loopback names if you still use them.
+ * Unset — or set to an empty/blank string — means "use the default"; there is
+ * deliberately no way to spell "reject every Host", which would brick the
+ * server on a typo.
  */
 export function resolveHttpSecurity(env: EnvLike): HttpSecurityConfig {
   return {
@@ -153,19 +159,21 @@ export function dnsRebindingProtection(
 }
 
 /**
- * The transport-level half of the protection, kept as defence in depth for the
- * Origin check. The transport's Host check compares the full `host:port` header
- * rather than the hostname, which the port-agnostic middleware above already
- * covers correctly, so only origins are handed down.
+ * Why the transport-level options are deliberately *not* also enabled.
+ *
+ * Handing the same allowlists to `StreamableHTTPServerTransport` /
+ * `SSEServerTransport` looks like free defence in depth, but that layer
+ * contradicts two properties this middleware guarantees:
+ *
+ * - its Origin comparison is a case-**sensitive** `includes()` on the raw
+ *   header, so `HTTP://GOOD.EXAMPLE` is rejected where the middleware (and
+ *   RFC 6454) accepts it;
+ * - its 403 body reflects the offending header value back to the caller, and
+ *   its only report channel is `transport.onerror`, which `McpServer` leaves
+ *   unset — so an operator gets an undiagnosable 403 with nothing on stderr.
+ *
+ * Its Host check is also a full `host:port` string compare rather than a
+ * hostname compare, and it cannot see the legacy routes' whole surface anyway.
+ * The middleware above is therefore the single enforcement point, and it runs
+ * on every route before any request reaches a transport.
  */
-export function transportSecurityOptions(config: HttpSecurityConfig): {
-  enableDnsRebindingProtection?: boolean;
-  allowedOrigins?: string[];
-} {
-  const { allowedOrigins } = config;
-  if (allowedOrigins === "any" || allowedOrigins.length === 0) return {};
-  return {
-    enableDnsRebindingProtection: true,
-    allowedOrigins: allowedOrigins.slice(),
-  };
-}

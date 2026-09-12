@@ -35,7 +35,6 @@ import {
   dnsRebindingProtection,
   HttpSecurityConfig,
   resolveHttpSecurity,
-  transportSecurityOptions,
 } from "./security";
 
 /** Builds a fully registered, *unconnected* MCP server. Called per connection. */
@@ -63,7 +62,6 @@ function methodNotAllowed(_req: Request, res: Response): void {
 export function createMcpHttpApp(options: McpHttpAppOptions): Express {
   const { createServer } = options;
   const security = options.security ?? resolveHttpSecurity(process.env);
-  const transportOptions = transportSecurityOptions(security);
 
   const app = express();
   // Ordering matters: reject before any body is handed to a transport.
@@ -89,9 +87,10 @@ export function createMcpHttpApp(options: McpHttpAppOptions): Express {
       // Fresh server *and* fresh transport: two unrelated clients share no
       // mutable object, so neither can observe the other's responses or state.
       server = createServer();
+      // No transport-level Host/Origin options: `dnsRebindingProtection` above
+      // is the single enforcement point. See the note in security.ts.
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
-        ...transportOptions,
       });
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
@@ -113,7 +112,7 @@ export function createMcpHttpApp(options: McpHttpAppOptions): Express {
   app.delete("/mcp", methodNotAllowed);
 
   if (options.enableLegacySse !== false) {
-    registerLegacySseRoutes(app, { createServer, transportOptions });
+    registerLegacySseRoutes(app, { createServer });
   }
 
   return app;

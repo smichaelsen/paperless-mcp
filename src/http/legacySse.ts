@@ -16,10 +16,6 @@ import { McpServerFactory } from "./app";
 
 export interface LegacySseOptions {
   createServer: McpServerFactory;
-  transportOptions?: {
-    enableDnsRebindingProtection?: boolean;
-    allowedOrigins?: string[];
-  };
 }
 
 interface SseSession {
@@ -35,7 +31,7 @@ export function registerLegacySseRoutes(
   app: Express,
   options: LegacySseOptions
 ): void {
-  const { createServer, transportOptions = {} } = options;
+  const { createServer } = options;
 
   // Session id -> that client's own server and transport. Nothing in here is
   // ever handed to another session.
@@ -46,9 +42,7 @@ export function registerLegacySseRoutes(
     log("info", "sse_connection_opening");
     try {
       const server = createServer();
-      const transport = new SSEServerTransport("/messages", res, {
-        ...transportOptions,
-      });
+      const transport = new SSEServerTransport("/messages", res);
       sessions.set(transport.sessionId, { transport, server });
       res.on("close", () => {
         sessions.delete(transport.sessionId);
