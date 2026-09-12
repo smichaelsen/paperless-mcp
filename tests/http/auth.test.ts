@@ -508,8 +508,36 @@ describe("bearerCredential", () => {
     expect(bearerCredential("Bearer")).toBeUndefined();
     expect(bearerCredential("Bearer   ")).toBeUndefined();
     expect(bearerCredential("Bearertoken")).toBeUndefined();
-    // Two Authorization headers arrive as an array: not a valid request.
-    expect(bearerCredential([`Bearer ${SECRET}`, "Bearer other"])).toBeUndefined();
+  });
+
+  it("has a defensive array branch that real HTTP cannot reach", () => {
+    // Not an observable HTTP behaviour and deliberately not asserted as one:
+    // Node discards repeated `Authorization` headers and keeps the first, so
+    // `req.headers.authorization` is never an array and a request carrying
+    // [correct, wrong] authenticates on the correct one and succeeds. The
+    // branch is kept against a future transport that does surface arrays; the
+    // test below pins the branch, not a property of this server.
+    expect(
+      bearerCredential([`Bearer ${SECRET}`, "Bearer other"])
+    ).toBeUndefined();
+  });
+
+  it("authenticates on the first of two Authorization headers", async () => {
+    // The actual, observable behaviour, written down so nobody re-derives the
+    // stronger claim from the defensive branch above.
+    const app = await serve(BEARER);
+    const response = await rawRequest({
+      port: app.port,
+      path: "/mcp",
+      headers: {
+        ...jsonHeaders,
+        host: `127.0.0.1:${app.port}`,
+        // An array writes two separate header lines on the wire.
+        authorization: [`Bearer ${SECRET}`, "Bearer wrong"],
+      },
+      body: initializeBody(),
+    });
+    expect(response.status).toBe(200);
   });
 });
 

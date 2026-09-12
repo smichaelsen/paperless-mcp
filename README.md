@@ -797,9 +797,14 @@ curl -s http://127.0.0.1:3000/mcp \
 
 - The secret comes from `PAPERLESS_MCP_AUTH_TOKEN_FILE` (preferred) or
   `PAPERLESS_MCP_AUTH_TOKEN`. There is no CLI flag on purpose.
-- A missing, malformed, wrong or duplicated credential all get the **same** `401` with
-  the same body and a `WWW-Authenticate: Bearer` header. Nothing distinguishes them —
-  telling "malformed" from "wrong" would tell a prober which half of its guess to fix.
+- A missing, malformed (`Basic` instead of `Bearer`, `Bearer` with nothing after it, no
+  scheme at all) or simply wrong credential all get the **same** `401` with the same
+  body and a `WWW-Authenticate: Bearer` header. Nothing distinguishes them — telling
+  "malformed" from "wrong" would tell a prober which half of its guess to fix.
+- A **duplicated** `Authorization` header is not rejected: Node keeps the first copy and
+  discards the rest, so the first one is what gets authenticated. This is noted because
+  it is easy to assume otherwise; it is not a weakness, since supplying a correct value
+  in either position already requires the secret.
 - The comparison is constant time (`crypto.timingSafeEqual` over SHA-256 digests, so a
   length mismatch neither throws nor leaks the secret's length).
 - The secret is registered with the log redactor. It — and the `Authorization` header —
@@ -858,6 +863,26 @@ Rate limiting keys on the client's TCP source address. `X-Forwarded-For` is deli
 its own bucket. Behind a reverse proxy every request therefore shares the proxy's
 address and the limit is effectively global — still a useful flood ceiling, but size it
 for the whole deployment rather than per client.
+
+The tracked-address table is bounded (10,000 entries). Past that, expired windows are
+swept and then the oldest live entry is evicted to make room, so an unauthenticated
+caller cycling source addresses cannot grow it without limit. Eviction resets the
+evicted client's counter; it never locks anyone out.
+
+> [!NOTE]
+> **The rate limiter runs before authentication, and that is a deliberate trade-off.**
+> It has to: checking the credential first would make every guess cheap and turn
+> authentication itself into the thing being brute-forced. The cost is that a caller who
+> exhausts the window from a given source address also locks out anyone else on that
+> address — including a client holding the **correct** secret, which gets `429` rather
+> than `200`.
+>
+> On a loopback or per-client-address deployment that is barely reachable. **Behind a
+> reverse proxy it matters a great deal**: every request shares the proxy's address, so
+> one noisy or hostile client consumes the whole window for everyone. If you deploy
+> behind a proxy, do the rate limiting *there*, where the real client address is known,
+> and set `PAPERLESS_MCP_RATE_LIMIT_MAX` high enough that this limiter only acts as a
+> backstop (or `0` to disable it, if the proxy's limiting is authoritative).
 
 #### Client isolation
 
