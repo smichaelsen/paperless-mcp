@@ -302,16 +302,19 @@ describe("the probes expose nothing but a verdict", () => {
       const onUnknownPath = await request("/nonexistent", { method });
 
       // No write verb produces a verdict, and none of them reaches Paperless.
-      expect(onProbePath.status).toBe(404);
+      expect(onProbePath.status).toBe(401);
       expect(onProbePath.body).not.toContain('"status"');
       expect(calls).toHaveLength(0);
 
-      // The two differ — 404 here, 401 there — because the exemption is keyed
-      // on the path and nothing else, so everything that is not a probe path
-      // is still behind authentication whatever verb it arrives with. The
-      // difference reveals only that `/readyz` exists, which its own `GET 200`
-      // announces anyway.
+      // Issue #26 changed this from 404 to 401, and made the two identical.
+      // The exemption is keyed on the path *and* the method, so a write verb
+      // on a probe path is authenticated like any other request — which is
+      // what stops it from reaching `express.json()` and having a 9 MiB body
+      // buffered for it. Answering both alike also stops an unauthenticated
+      // prober from mapping which routes exist.
       expect(onUnknownPath.status).toBe(401);
+      expect(onProbePath.status).toBe(onUnknownPath.status);
+      expect(onProbePath.body).toBe(onUnknownPath.body);
     }
   );
 });

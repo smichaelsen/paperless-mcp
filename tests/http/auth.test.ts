@@ -22,6 +22,8 @@ import {
   ALLOW_UNAUTHENTICATED_ENV,
   AUTH_TOKEN_ENV,
   AUTH_TOKEN_FILE_ENV,
+  UNAUTHENTICATED_METHODS,
+  UNAUTHENTICATED_PATHS,
   bearerCredential,
   describeAuth,
   HttpAuthConfig,
@@ -29,6 +31,7 @@ import {
   secretsMatch,
 } from "../../src/config/httpAuth";
 import { createMcpHttpApp } from "../../src/http/app";
+import { isPublicRequest } from "../../src/http/auth";
 import { logUnhandledRejection } from "../../src/http/processErrors";
 import { clearRegisteredSecrets, logFatal } from "../../src/logging";
 import {
@@ -538,6 +541,169 @@ describe("bearerCredential", () => {
       body: initializeBody(),
     });
     expect(response.status).toBe(200);
+  });
+});
+
+/**
+ * Issue #26: the health exemption was keyed on the **path alone**, so it
+ * applied to every method. `express.json()` is mounted after this middleware
+ * precisely so that an unauthenticated caller can never make the process
+ * buffer a body — but an exempt path skipped auth and reached the parser
+ * anyway. Measured against the built server: 24 concurrent unauthenticated
+ * 9 MiB `POST /healthz` took RSS from 73 MiB to 663 MiB, against a documented
+ * container limit of 256 MiB.
+ */
+describe("the health exemption is scoped to GET and HEAD", () => {
+  /**
+   * An app whose body parser is observable. If `express.json()` ever runs for
+   * a request, `req.body` is set and this route reports how many bytes it
+   * received — so "rejected before parsing" can be asserted directly rather
+   * than inferred from a status code.
+   */
+  async function serveWithParserProbe(): Promise<{
+    app: RunningApp;
+    parsed: () => number;
+  }> {
+    let parsedRequests = 0;
+    running = await startApp(
+      createMcpHttpApp({
+        auth: BEARER,
+        createServer: testServer,
+        security: SECURITY,
+        health: {
+          // A liveness-only app: no upstream is ever contacted.
+          probeUpstream: async () => true,
+        },
+        // Rate limiting off: these tests send bursts and must reach the
+        // middleware under test, not be shed before it.
+        limits: {
+          maxBody: "10mb",
+          rateLimitMax: 0,
+          rateLimitWindowMs: 60_000,
+        },
+      }).use((req, _res, next) => {
+        // Mounted last, so it only sees requests that got past everything
+        // else. `express.json()` sets `req.body` to `{}` at minimum.
+        if (req.body !== undefined) parsedRequests += 1;
+        next();
+      })
+    );
+    return { app: running, parsed: () => parsedRequests };
+  }
+
+  /** ~200 kB of JSON: unmistakable if it is ever buffered. */
+  const bigBody = JSON.stringify({ x: "A".repeat(200_000) });
+
+  for (const path of UNAUTHENTICATED_PATHS) {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      it(`rejects ${method} ${path} with 401 before the body is parsed`, async () => {
+        const { app, parsed } = await serveWithParserProbe();
+        const response = await rawRequest({
+          port: app.port,
+          path,
+          method,
+          headers: {
+            ...jsonHeaders,
+            host: `127.0.0.1:${app.port}`,
+            "content-length": String(Buffer.byteLength(bigBody)),
+          },
+          body: bigBody,
+        });
+
+        expect(response.status).toBe(401);
+        // The load-bearing half: not merely "not 200", but that nothing
+        // downstream of the parser ever saw this request.
+        expect(parsed()).toBe(0);
+      });
+    }
+
+    for (const method of UNAUTHENTICATED_METHODS) {
+      it(`still answers ${method} ${path} without a credential`, async () => {
+        const { app } = await serveWithParserProbe();
+        const response = await rawRequest({
+          port: app.port,
+          path,
+          method,
+          headers: { host: `127.0.0.1:${app.port}` },
+        });
+        expect(response.status).toBe(200);
+      });
+    }
+  }
+
+  it("answers a probe path and an unknown path identically when unauthenticated", async () => {
+    // The oracle #26 closed: `POST /healthz` used to be 404 while
+    // `POST /nonexistent` was 401, which mapped the route table for free.
+    const { app } = await serveWithParserProbe();
+    const onProbe = await rawRequest({
+      port: app.port,
+      path: "/healthz",
+      method: "POST",
+      headers: { ...jsonHeaders, host: `127.0.0.1:${app.port}` },
+      body: "{}",
+    });
+    const onUnknown = await rawRequest({
+      port: app.port,
+      path: "/nonexistent",
+      method: "POST",
+      headers: { ...jsonHeaders, host: `127.0.0.1:${app.port}` },
+      body: "{}",
+    });
+
+    expect(onProbe.status).toBe(401);
+    expect(onProbe.status).toBe(onUnknown.status);
+    expect(onProbe.body).toBe(onUnknown.body);
+    expect(onProbe.headers["www-authenticate"]).toBe(
+      onUnknown.headers["www-authenticate"]
+    );
+  });
+
+  it("keeps the exemption available to an authenticated caller on any method", async () => {
+    // Scoping the exemption must not make the paths unreachable — an
+    // authenticated POST still gets the route's own answer (404: health
+    // registers no POST handler), not a 401.
+    const { app } = await serveWithParserProbe();
+    const response = await rawRequest({
+      port: app.port,
+      path: "/healthz",
+      method: "POST",
+      headers: {
+        ...jsonHeaders,
+        host: `127.0.0.1:${app.port}`,
+        authorization: `Bearer ${SECRET}`,
+      },
+      body: "{}",
+    });
+    expect(response.status).toBe(404);
+  });
+});
+
+describe("isPublicRequest", () => {
+  it("requires the method and the path to match", () => {
+    expect(isPublicRequest("GET", "/healthz")).toBe(true);
+    expect(isPublicRequest("HEAD", "/readyz")).toBe(true);
+    // One trailing slash is still normalized away.
+    expect(isPublicRequest("GET", "/healthz/")).toBe(true);
+
+    // The #26 regression, in one line.
+    expect(isPublicRequest("POST", "/healthz")).toBe(false);
+    expect(isPublicRequest("PUT", "/readyz")).toBe(false);
+    expect(isPublicRequest("DELETE", "/healthz")).toBe(false);
+    expect(isPublicRequest("OPTIONS", "/healthz")).toBe(false);
+
+    // A non-exempt path is never public, whatever the method.
+    expect(isPublicRequest("GET", "/mcp")).toBe(false);
+    expect(isPublicRequest("GET", "/healthz/../mcp")).toBe(false);
+    expect(isPublicRequest("GET", "/healthzz")).toBe(false);
+    expect(isPublicRequest("GET", "//healthz")).toBe(false);
+
+    // HTTP methods are case-sensitive (RFC 9110 §9.1); a lowercase verb is
+    // not the exempt one and is authenticated like anything else.
+    expect(isPublicRequest("get", "/healthz")).toBe(false);
+  });
+
+  it("exempts read-only methods only", () => {
+    expect([...UNAUTHENTICATED_METHODS].sort()).toEqual(["GET", "HEAD"]);
   });
 });
 

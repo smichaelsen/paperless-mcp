@@ -47,13 +47,40 @@ export type HttpAuthConfig =
  * Container and orchestrator probes cannot present a bearer token, so
  * `/healthz` and `/readyz` (issue #10) must answer without one. They are still
  * inside the Host/Origin and rate-limit boundaries, and whatever serves them
- * must return a static liveness/readiness verdict and nothing else — no
- * version, no Paperless URL, no configuration.
+ * returns a static liveness/readiness verdict and nothing else — no version,
+ * no Paperless URL, no configuration. See `src/http/health.ts`.
  *
- * Nothing here serves these paths today; the exemption exists so #10 can add
- * them without reopening this decision.
+ * An exemption is a **path and a method together** — see
+ * {@link UNAUTHENTICATED_METHODS}. Both halves live here, in one place, so the
+ * policy cannot be read as complete while half of it is somewhere else.
  */
 export const UNAUTHENTICATED_PATHS: readonly string[] = ["/healthz", "/readyz"];
+
+/**
+ * The only methods exempt on {@link UNAUTHENTICATED_PATHS}.
+ *
+ * Issue #26: the exemption used to be keyed on the path alone, so it applied
+ * to *every* method. `express.json()` is mounted after the auth middleware
+ * precisely so an unauthenticated caller can never make this process buffer a
+ * body — but a request to an exempt path skipped auth and reached the parser
+ * anyway. Measured: 24 concurrent unauthenticated 9 MiB `POST /healthz` took
+ * RSS from 73 MiB to 663 MiB. Against the documented `memory: 256M` container
+ * limit with `restart: unless-stopped`, that is an OOM kill and a crash loop
+ * for an attacker who holds no credential at all.
+ *
+ * A probe needs `GET`, and `HEAD` because Express answers it from the same
+ * handler. Nothing else: every other method on these paths now falls through
+ * to authentication and is rejected *before* the parser runs.
+ *
+ * This also closes a small oracle. `POST /healthz` used to return 404 while
+ * `POST /nonexistent` returned 401, which told an unauthenticated prober
+ * which routes exist. Both are 401 now.
+ *
+ * Compared case-sensitively against `req.method`, which HTTP defines as
+ * case-sensitive (RFC 9110 §9.1). A lowercase `get` is not `GET` and is
+ * authenticated like anything else.
+ */
+export const UNAUTHENTICATED_METHODS: readonly string[] = ["GET", "HEAD"];
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "y", "on", "enable", "enabled"]);
 
