@@ -107,6 +107,8 @@ is not even read in that case. In `--http` mode the environment is the only sour
 | `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
 | `PAPERLESS_ALLOW_WRITES` | Register the write-class tools. Off by default — see [Tool access modes](#tool-access-modes). |
 | `PAPERLESS_ALLOW_DESTRUCTIVE` | Register the destructive-class tools. Off by default, and never implied by `PAPERLESS_ALLOW_WRITES`. |
+| `PAPERLESS_MCP_ALLOWED_HOSTS` | `--http` only. Comma-separated hostnames accepted in the `Host` header. Default: `localhost,127.0.0.1,[::1]`. `*` disables the check. |
+| `PAPERLESS_MCP_ALLOWED_ORIGINS` | `--http` only. Comma-separated origins accepted in the `Origin` header. Default: none — a request carrying *any* `Origin` is rejected, while requests without one (every non-browser MCP client) pass. `*` disables the check. |
 
 `PAPERLESS_API_TOKEN_FILE` is meant for Docker/Kubernetes secrets: the file is read once
 at startup, surrounding whitespace (including the trailing newline) is stripped, and an
@@ -725,3 +727,31 @@ PAPERLESS_URL=http://localhost:8000 PAPERLESS_API_TOKEN=<token> \
 - The MCP API will be available at `POST /mcp` on the specified port.
 - Each request is handled statelessly, following the [StreamableHTTPServerTransport](https://github.com/modelcontextprotocol/typescript-sdk) pattern.
 - GET and DELETE requests to `/mcp` will return 405 Method Not Allowed.
+
+#### Client isolation
+
+Every connection gets its own `McpServer` and its own transport; no mutable server,
+transport or session state is shared between clients. For Streamable HTTP a connection
+is a single request — the mode is stateless, so no `Mcp-Session-Id` is issued and there
+is no session table to leak or expire. The legacy `GET /sse` route keeps one server per
+event stream, closed with the stream.
+
+#### DNS-rebinding protection
+
+Any web page can POST to `http://localhost:3000/mcp`, so the `Host` and `Origin` headers
+are validated before a request reaches a transport. The defaults only allow loopback
+hostnames and reject every browser origin; see `PAPERLESS_MCP_ALLOWED_HOSTS` and
+`PAPERLESS_MCP_ALLOWED_ORIGINS` under [Configuration](#configuration).
+
+If you reach the server under any other name — a Docker service name, a reverse proxy —
+add it, otherwise requests are answered with `403`:
+
+```
+PAPERLESS_MCP_ALLOWED_HOSTS=paperless-mcp,mcp.example
+```
+
+The allowlists in effect are printed at startup:
+
+```json
+{"level":"info","event":"http_server_listening","port":3000,"transport":"streamable-http","session_mode":"stateless","allowed_hosts":"localhost,127.0.0.1,[::1]","allowed_origins":"(none)"}
+```

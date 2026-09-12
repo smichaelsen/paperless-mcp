@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express from "express";
 import { PaperlessAPI } from "./api/PaperlessAPI";
 import {
   resolvePaperlessToken,
   TOKEN_ENV,
   TOKEN_FILE_ENV,
 } from "./config/credentials";
-import { logFatal, registerSecret } from "./logging";
+import { resolveToolAccess } from "./config/toolAccess";
+import { createMcpHttpApp } from "./http/app";
+import { installProcessErrorHandlers } from "./http/processErrors";
+import { describeAllowlist, resolveHttpSecurity } from "./http/security";
+import { log, logFatal, registerSecret } from "./logging";
 import { registerAllTools } from "./mcp/registerTools";
 
 // Simple CLI argument parsing
@@ -24,6 +25,8 @@ if (portIndex !== -1 && args[portIndex + 1]) {
 }
 
 async function main() {
+  installProcessErrorHandlers();
+
   let baseUrl: string | undefined;
   let token: string | undefined;
 
@@ -65,112 +68,36 @@ async function main() {
 
   registerSecret(token);
 
-  // Initialize API client and server once
+  // The API client is stateless and safe to share: it holds a base URL and a
+  // token and keeps no per-client state. The MCP server is not — it stores the
+  // transport it is connected to — so it is built per connection instead.
   const api = new PaperlessAPI(baseUrl, token);
-  const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
-  registerAllTools(server, api);
+  // Resolved once, not per connection: the access mode cannot change while the
+  // process runs, and re-resolving it would repeat its warnings on every
+  // request.
+  const toolAccess = resolveToolAccess();
+  const createServer = (): McpServer => {
+    const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
+    registerAllTools(server, api, toolAccess);
+    return server;
+  };
 
   if (useHttp) {
-    const app = express();
-    app.use(express.json());
-
-    // Store transports for each session
-    const sseTransports: Record<string, SSEServerTransport> = {};
-
-    app.post("/mcp", async (req, res) => {
-      try {
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-        });
-        res.on("close", () => {
-          transport.close();
-        });
-        await server.connect(transport);
-        await transport.handleRequest(req, res, req.body);
-      } catch (error) {
-        console.error("Error handling MCP request:", error);
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32603,
-              message: "Internal server error",
-            },
-            id: null,
-          });
-        }
-      }
-    });
-
-    app.get("/mcp", async (req, res) => {
-      res.writeHead(405).end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message: "Method not allowed.",
-          },
-          id: null,
-        })
-      );
-    });
-
-    app.delete("/mcp", async (req, res) => {
-      res.writeHead(405).end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message: "Method not allowed.",
-          },
-          id: null,
-        })
-      );
-    });
-
-    app.get("/sse", async (req, res) => {
-      console.log("SSE request received");
-      try {
-        const transport = new SSEServerTransport("/messages", res);
-        sseTransports[transport.sessionId] = transport;
-        res.on("close", () => {
-          delete sseTransports[transport.sessionId];
-          transport.close();
-        });
-        await server.connect(transport);
-      } catch (error) {
-        console.error("Error handling SSE request:", error);
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32603,
-              message: "Internal server error",
-            },
-            id: null,
-          });
-        }
-      }
-    });
-
-    app.post("/messages", async (req, res) => {
-      const sessionId = req.query.sessionId as string;
-      const transport = sseTransports[sessionId];
-      if (transport) {
-        await transport.handlePostMessage(req, res, req.body);
-      } else {
-        res.status(400).send("No transport found for sessionId");
-      }
-    });
-
+    const security = resolveHttpSecurity(process.env);
+    const app = createMcpHttpApp({ createServer, security });
     app.listen(port, () => {
-      console.log(
-        `MCP Stateless Streamable HTTP Server listening on port ${port}`
-      );
+      // stderr via log(): stdout is the MCP framing channel under stdio.
+      log("info", "http_server_listening", {
+        port,
+        transport: "streamable-http",
+        session_mode: "stateless",
+        allowed_hosts: describeAllowlist(security.allowedHosts),
+        allowed_origins: describeAllowlist(security.allowedOrigins),
+      });
     });
   } else {
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await createServer().connect(transport);
   }
 }
 
