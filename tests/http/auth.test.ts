@@ -624,6 +624,21 @@ describe("the health exemption is scoped to GET/HEAD with no body", () => {
         // downstream of the parser ever saw this request.
         expect(parsed()).toBe(0);
       });
+
+      // The same verb with *no* body. Without this the two conditions mask
+      // each other: every body-bearing case above is caught by the body
+      // condition alone, so removing the method condition would leave the
+      // suite green on them. A mutation run proved exactly that.
+      it(`rejects a bodyless ${method} ${path} with 401`, async () => {
+        const { app } = await serveWithParserProbe();
+        const response = await rawRequest({
+          port: app.port,
+          path,
+          method,
+          headers: { host: `127.0.0.1:${app.port}` },
+        });
+        expect(response.status).toBe(401);
+      });
     }
 
     for (const method of UNAUTHENTICATED_METHODS) {
