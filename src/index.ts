@@ -77,8 +77,11 @@ async function main() {
   // request.
   const toolAccess = resolveToolAccess();
   // The advertised surface is identical for every connection, so it is logged
-  // once at startup rather than from inside registration — which under `--http`
-  // runs per request and would repeat this line on every one.
+  // once per process rather than from inside registration — which under `--http`
+  // runs per request and would repeat this line on every one. Under `--http`
+  // that means the line lands on the first connection, not at listen time,
+  // because no server exists until then. The flag is scoped to this `main()`
+  // call; moving `createServer` out of it would need the flag to move too.
   let modeLogged = false;
   const createServer = (): McpServer => {
     const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });

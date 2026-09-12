@@ -78,7 +78,7 @@ describe("concurrent clients on the real tool surface", () => {
             name: "paperless-ngx",
             version: "1.0.0",
           });
-          registerAllTools(server, api);
+          registerAllTools(server, api, toolAccessMode(true, true));
           return server;
         },
         security: SECURITY,

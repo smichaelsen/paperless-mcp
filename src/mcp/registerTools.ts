@@ -22,7 +22,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaperlessAPI } from "../api/PaperlessAPI";
 import type { ToolAccessMode } from "../config/toolAccess";
-import { resolveToolAccess } from "../config/toolAccess";
 import { registerCorrespondentTools } from "../tools/correspondents";
 import { registerDocumentTools } from "../tools/documents";
 import { registerDocumentTypeTools } from "../tools/documentTypes";
@@ -162,14 +161,16 @@ export function closedSchemaRegistrar(
 /**
  * Register the Paperless tool surface `mode` allows on `server`.
  *
- * `mode` defaults to the process configuration — the environment variables and
- * CLI flags documented in `src/config/toolAccess.ts` — which is why the call in
- * `src/index.ts` needs no arguments. Tests pass a mode explicitly.
+ * `mode` is required rather than defaulting to `resolveToolAccess()`. Under
+ * `--http` this runs once per connection, and resolving the mode here would
+ * re-read the environment and repeat its warnings on every request — the same
+ * reason the mode is not logged here. The caller resolves it once and passes it
+ * in; see `src/index.ts`.
  */
 export function registerAllTools(
   server: McpServer,
   api: PaperlessAPI,
-  mode: ToolAccessMode = resolveToolAccess()
+  mode: ToolAccessMode
 ): string[] {
   const registered: string[] = [];
   // The tool modules only ever call `server.tool(...)`; one of them declares
