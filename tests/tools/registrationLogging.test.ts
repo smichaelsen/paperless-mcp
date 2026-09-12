@@ -3,9 +3,13 @@
  *
  * Under `--http` a fresh `McpServer` is built for every connection, so anything
  * logged from inside `registerAllTools` is emitted on every single request. The
- * access mode cannot change while the process runs, so that line belongs at
- * startup — `src/index.ts` logs it once — and registration itself must log
- * nothing.
+ * access mode cannot change while the process runs, so `src/index.ts` logs it
+ * once per process instead, and registration itself must log nothing.
+ *
+ * Two invariants, because there are two ways to reintroduce the defect:
+ * registration must not *log* the mode, and it must not *resolve* it either —
+ * resolution warns about malformed settings, which would land on every request
+ * just the same. Hence `mode` being a required parameter.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
