@@ -129,19 +129,37 @@ export const BULK_EDIT_DESTRUCTIVE_METHODS = [
 /**
  * Arguments that only ever serve a destructive method, or turn a
  * non-destructive one destructive. Removed from the write-mode schema.
+ *
+ * `pages` is deliberately *not* here. It reads like a `delete_pages` argument,
+ * but Paperless also takes it as the required split specification
+ * (`BulkEditSerializer._validate_parameters_split` rejects a `split` without
+ * it), so stripping it would advertise a `split` that can only ever answer 400.
+ * Keeping it cannot widen the boundary: `delete_pages` is unreachable through
+ * the narrowed enum and refused again by the handler, and `pages` alone does
+ * nothing.
  */
 export const BULK_EDIT_DESTRUCTIVE_ARGS = [
   "permissions",
   "delete_originals",
-  "pages",
 ] as const;
+
+/**
+ * `pages` as write mode advertises it. The declared description documents the
+ * `delete_pages` format, which is not the method it can serve here: for `split`
+ * the value lists the page *ranges* that each become their own document.
+ */
+const WRITE_PAGES_DESCRIPTION =
+  "Page specification for the 'split' method: comma-separated page ranges, each " +
+  "of which becomes a new document. '1-2,3-4' splits a four-page document into " +
+  "two. Required by 'split' and ignored by every other method available here.";
 
 const WRITE_METHOD_DESCRIPTION =
   "The bulk operation to perform: set_correspondent (assign sender/receiver), " +
   "set_document_type (categorize documents), set_storage_path (organize file location), " +
   "add_tag/remove_tag/modify_tags (manage labels), reprocess (re-run OCR/indexing), " +
   "merge (combine documents into a new one, keeping the originals), " +
-  "split (separate into multiple documents, keeping the original), " +
+  "split (separate one document into several along the ranges given in 'pages', " +
+  "keeping the original), " +
   "rotate (adjust orientation). Deleting documents or pages and replacing permissions " +
   "are not available: this server was not started with destructive operations enabled.";
 
@@ -160,11 +178,14 @@ function isDestructiveMethod(method: unknown): boolean {
  *
  * So in write mode the tool is registered with a **narrowed** contract: the
  * `method` enum only offers the non-destructive methods, and the arguments that
- * exist solely to delete (`delete_originals`, `pages`) or to replace
- * permissions are dropped from the schema. The handler re-checks both, so a
- * client that ignores the schema is refused rather than obeyed, and
- * `merge`/`split` are forwarded with an explicit `delete_originals: false`
- * instead of relying on the Paperless default.
+ * exist solely to delete (`delete_originals`) or to replace permissions are
+ * dropped from the schema. The handler re-checks both, so a client that ignores
+ * the schema is refused rather than obeyed, and `merge`/`split` are forwarded
+ * with an explicit `delete_originals: false` instead of relying on the
+ * Paperless default.
+ *
+ * `pages` stays, redescribed: `split` cannot work without it. See
+ * {@link BULK_EDIT_DESTRUCTIVE_ARGS}.
  */
 export const gateBulkEditDocuments: ToolGate = (registration, mode) => {
   if (!mode.writes) return null;
@@ -174,6 +195,9 @@ export const gateBulkEditDocuments: ToolGate = (registration, mode) => {
   delete rest.documents;
   delete rest.method;
   for (const argument of BULK_EDIT_DESTRUCTIVE_ARGS) delete rest[argument];
+  // Assigning an existing key keeps its position, so the argument order the
+  // snapshot records does not shift.
+  if (rest.pages) rest.pages = rest.pages.describe(WRITE_PAGES_DESCRIPTION);
 
   return {
     ...registration,

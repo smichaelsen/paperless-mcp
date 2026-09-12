@@ -37,14 +37,23 @@ async function main() {
       process.exit(1);
     }
   } else {
-    baseUrl = args[0] || process.env.PAPERLESS_URL;
+    // A flag is never a positional value. Without this, `paperless-mcp
+    // --allow-writes` with credentials in the environment would take the flag
+    // as the base URL, discard PAPERLESS_URL, pass the usage check below, and
+    // then fail every single request with an ERR_INVALID_URL only visible in
+    // stderr. The value after `--port` is skipped with it.
+    const positional = args.filter(
+      (arg, index) =>
+        !arg.startsWith("--") && !(index > 0 && args[index - 1] === "--port")
+    );
+    baseUrl = positional[0] || process.env.PAPERLESS_URL;
     // Resolved lazily: a positional token wins, and `||` short-circuits, so a
     // stale or unmounted PAPERLESS_API_TOKEN_FILE in the environment cannot
     // break the documented `paperless-mcp <baseUrl> <token>` form.
-    token = args[1] || resolvePaperlessToken(process.env)?.value;
+    token = positional[1] || resolvePaperlessToken(process.env)?.value;
     if (!baseUrl || !token) {
       console.error(
-        "Usage: paperless-mcp <baseUrl> <token> [--http] [--port <port>]"
+        "Usage: paperless-mcp <baseUrl> <token> [--http] [--port <port>] [--allow-writes] [--allow-destructive]"
       );
       console.error(
         "Example: paperless-mcp http://localhost:8000 your-api-token --http --port 3000"

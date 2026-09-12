@@ -167,13 +167,10 @@ client's allowlist has less to cover.
 | `PAPERLESS_ALLOW_WRITES` | `--allow-writes` | Register the write-class tools. |
 | `PAPERLESS_ALLOW_DESTRUCTIVE` | `--allow-destructive` | Register the destructive-class tools. Never implied by `PAPERLESS_ALLOW_WRITES`. |
 
-> [!NOTE]
-> The flags are positional-argument-safe only *after* the URL and the token
-> (`paperless-mcp https://paperless.example <token> --allow-writes`) or in
-> `--http` mode, which ignores positional arguments. If you rely on
-> `PAPERLESS_URL`/`PAPERLESS_API_TOKEN` for a stdio server, use the environment
-> variables for these switches too: the first positional argument is still read
-> as the base URL.
+The flags may appear anywhere on the command line: flags (and the value after
+`--port`) are no longer mistaken for the positional `<baseUrl> <token>`, so
+`paperless-mcp --allow-writes` with `PAPERLESS_URL` and `PAPERLESS_API_TOKEN`
+in the environment works as expected.
 
 Accepted true values are `1`, `true`, `yes`, `y`, `on`, `enable`, `enabled`
 (case-insensitive). Anything unrecognized is treated as **off** and logged:
@@ -232,18 +229,29 @@ It is therefore registered with a **narrowed contract** in write mode:
   `merge`, `split`, `rotate`;
 - `delete`, `delete_pages` and `set_permissions` are not in the advertised enum
   and are refused by the handler as well;
-- the `delete_originals`, `pages` and `permissions` arguments are removed from
-  the schema, and `merge`/`split` are sent with an explicit
+- the `delete_originals` and `permissions` arguments are removed from the
+  schema, and `merge`/`split` are sent with an explicit
   `delete_originals: false` — so they create a new document and leave the
-  originals in place.
+  originals in place;
+- `pages` stays, because Paperless requires it to `split` (it is redescribed
+  for that use). On its own it does nothing: the method that would delete pages
+  is not reachable.
 
 With `PAPERLESS_ALLOW_DESTRUCTIVE` the full enum and all arguments come back.
 
 ### Recommended client allowlist
 
 Server-side gating decides what *exists*; the client's allowlist decides what
-runs without asking. Because unavailable tools are absent, a read-only server
-needs no allowlist at all — everything it offers is safe to auto-approve:
+runs without asking. A read-only server cannot change or destroy anything,
+which makes the read class the only one worth auto-approving at all — but
+read-only is not the same as harmless. `search_documents` and
+`download_document` return the contents of your documents, so a prompt
+injection hidden in a scanned document can use them to find sensitive material
+and hand it to whatever *other* tool the assistant has for sending data out
+(web requests, mail, shell). Auto-approve them only where you would accept
+that, and be deliberate about what else is in the same session.
+
+With that caveat, the read class is what an allowlist should contain:
 
 ```
 paperless:get_document, paperless:search_documents, paperless:download_document,
@@ -261,7 +269,8 @@ everything:
 
 ### Approval policy
 
-- **Auto-approve** the read class only.
+- **Auto-approve** the read class only, and only with the exfiltration caveat
+  above in mind.
 - **Ask every time** for the write class. `update_document` and
   `bulk_edit_documents` act on many documents at once; see the `documents`
   array before it runs.

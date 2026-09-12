@@ -10,7 +10,12 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toolAccessMode } from "../../src/config/toolAccess";
-import { gateBulkEditDocuments, policyFor } from "../../src/mcp/toolPolicy";
+import {
+  BULK_EDIT_DESTRUCTIVE_METHODS,
+  BULK_EDIT_WRITE_METHODS,
+  gateBulkEditDocuments,
+  policyFor,
+} from "../../src/mcp/toolPolicy";
 import { jsonResponse, mockFetch } from "../helpers/fetchMock";
 import {
   BASE_URL,
@@ -117,8 +122,14 @@ const EXPECTED_ANNOTATIONS: Record<string, ToolAnnotations> = {
 /** Enum values that must never be reachable without the destructive opt-in. */
 const DESTRUCTIVE_ENUM_VALUES = ["delete", "delete_pages", "set_permissions"];
 
-/** Arguments that must never be advertised without the destructive opt-in. */
-const DESTRUCTIVE_ARGUMENTS = ["permissions", "delete_originals", "pages"];
+/**
+ * Arguments that must never be advertised without the destructive opt-in.
+ *
+ * `pages` is not one of them: Paperless also takes it as the required `split`
+ * specification, so write mode must keep it. It is inert on its own — the
+ * method that would delete pages is not reachable.
+ */
+const DESTRUCTIVE_ARGUMENTS = ["permissions", "delete_originals"];
 
 beforeEach(() => {
   // Registration logs the active mode to stderr; keep the suite output clean.
@@ -271,11 +282,38 @@ describe("bulk_edit_documents, whose destructiveness is an argument", () => {
     ]);
     expect(Object.keys(schema.properties)).not.toContain("delete_originals");
     expect(Object.keys(schema.properties)).not.toContain("permissions");
-    expect(Object.keys(schema.properties)).not.toContain("pages");
-    // The non-destructive arguments survive the narrowing.
+    // The non-destructive arguments survive the narrowing — including `pages`,
+    // which `split` cannot do without.
     expect(Object.keys(schema.properties)).toEqual(
-      expect.arrayContaining(["documents", "tag", "add_tags", "degrees"])
+      expect.arrayContaining([
+        "documents",
+        "tag",
+        "add_tags",
+        "degrees",
+        "pages",
+      ])
     );
+    expect(schema.properties.pages.description).toMatch(/split/);
+  });
+
+  it("keeps split usable in write mode: the page ranges reach Paperless", async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ result: "OK" }));
+    const client = await connectInMode(MODES.write);
+
+    const result: any = await client.callTool({
+      name: "bulk_edit_documents",
+      arguments: { documents: [1], method: "split", pages: "1-2,3-4" },
+    });
+    await client.close();
+
+    expect(result.isError).toBeFalsy();
+    // Without `pages` Paperless answers 400 ("pages not specified"), so a
+    // stripped argument would advertise a split that can never succeed.
+    expect(JSON.parse(String(fetchMock.only().init.body))).toEqual({
+      documents: [1],
+      method: "split",
+      parameters: { pages: "1-2,3-4", delete_originals: false },
+    });
   });
 
   it("offers the full method enum once destructive operations are enabled", async () => {
@@ -290,6 +328,29 @@ describe("bulk_edit_documents, whose destructiveness is an argument", () => {
       expect.arrayContaining(["delete", "delete_pages", "set_permissions"])
     );
     expect(Object.keys(schema.properties)).toContain("delete_originals");
+  });
+
+  it("classifies every declared method exactly once", async () => {
+    // The two lists must partition the enum the tool module declares. A method
+    // added upstream and left out of both would otherwise vanish silently in
+    // write mode; one added to both would be a contradiction.
+    const client = await connectInMode(MODES.destructive);
+    const { tools } = await client.listTools();
+    await client.close();
+
+    const declared = (
+      tools.find((tool) => tool.name === "bulk_edit_documents")!
+        .inputSchema as any
+    ).properties.method.enum as string[];
+
+    expect(
+      [...BULK_EDIT_WRITE_METHODS, ...BULK_EDIT_DESTRUCTIVE_METHODS].sort()
+    ).toEqual([...declared].sort());
+    expect(
+      BULK_EDIT_WRITE_METHODS.filter((method) =>
+        (BULK_EDIT_DESTRUCTIVE_METHODS as readonly string[]).includes(method)
+      )
+    ).toEqual([]);
   });
 
   it("refuses a destructive method in write mode without reaching Paperless", async () => {
