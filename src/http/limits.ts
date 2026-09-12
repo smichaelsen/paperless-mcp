@@ -38,11 +38,36 @@ export const DEFAULT_RATE_LIMIT_MAX = 600;
 export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 
 /**
- * Upper bound on tracked client addresses. Only reachable when a genuinely
- * large number of distinct sources connect (an IPv6 /64 has plenty); it caps
- * the limiter's own memory so it cannot become the DoS it prevents.
+ * Hard upper bound on tracked client addresses — a real cap, enforced on every
+ * insert, not a sweep threshold.
+ *
+ * The key is the remote address, which an attacker with an IPv6 /64 controls
+ * by the billion, so an unbounded map would let an unauthenticated caller turn
+ * the rate limiter into the memory exhaustion it exists to prevent.
+ *
+ * ## What happens when it is full
+ *
+ * Expired windows are swept first. If that is not enough, the **oldest** entry
+ * is evicted to make room for the new one. The alternatives are both worse:
+ *
+ * - *refuse the new entry and answer 429* — an attacker fills the map once and
+ *   every genuinely new client is locked out. A real, remotely triggerable
+ *   denial of service.
+ * - *admit the new entry untracked* — an attacker fills the map and then rate
+ *   limits nobody, including themselves.
+ *
+ * Evicting the oldest costs an attacker-controlled counter reset: whoever is
+ * evicted starts a fresh window early. That is worth stating plainly, but it
+ * grants nothing new — an attacker who can present {@link MAX_TRACKED_CLIENTS}
+ * distinct source addresses can already evade a per-address limit simply by
+ * cycling them, and eviction can only *reset* a victim's counter (giving them
+ * more allowance), never lock them out.
+ *
+ * Insertion order is window-start order — a rollover deletes before
+ * re-inserting — so the first key of the Map is the oldest window and
+ * eviction is O(1).
  */
-const MAX_TRACKED_CLIENTS = 10_000;
+export const MAX_TRACKED_CLIENTS = 10_000;
 
 export type EnvLike = Record<string, string | undefined>;
 
@@ -136,16 +161,30 @@ export interface RateLimiterOptions {
   windowMs: number;
   /** Injected by tests so a window can be advanced without waiting for one. */
   now?: () => number;
+  /** Overridable so a test can reach the cap without 10,000 requests. */
+  maxTrackedClients?: number;
 }
+
+/**
+ * The middleware, plus one introspection hook.
+ *
+ * `trackedClients()` exists so a test can assert the cap is a *cap* rather
+ * than inferring it from behaviour. Nothing in `src/` calls it.
+ */
+export type RateLimitHandler = RequestHandler & {
+  /** How many client addresses currently have a window. */
+  trackedClients(): number;
+};
 
 /**
  * Fixed-window rate limiting per client address. Answers 429 with
  * `Retry-After` and a JSON-RPC error body, the shape every other rejection on
- * this server uses.
+ * this server uses. Memory is bounded — see {@link MAX_TRACKED_CLIENTS}.
  */
-export function rateLimit(options: RateLimiterOptions): RequestHandler {
+export function rateLimit(options: RateLimiterOptions): RateLimitHandler {
   const { max, windowMs } = options;
   const now = options.now ?? (() => Date.now());
+  const capacity = Math.max(1, options.maxTrackedClients ?? MAX_TRACKED_CLIENTS);
   const windows = new Map<string, Window>();
 
   const prune = (at: number): void => {
@@ -154,7 +193,18 @@ export function rateLimit(options: RateLimiterOptions): RequestHandler {
     }
   };
 
-  return (req: Request, res: Response, next: NextFunction): void => {
+  /** Drop expired windows, then the oldest, until there is room for one more. */
+  const makeRoom = (at: number): void => {
+    if (windows.size < capacity) return;
+    prune(at);
+    while (windows.size >= capacity) {
+      const oldest = windows.keys().next();
+      if (oldest.done) return;
+      windows.delete(oldest.value);
+    }
+  };
+
+  const handler = (req: Request, res: Response, next: NextFunction): void => {
     if (max <= 0) {
       next();
       return;
@@ -165,10 +215,12 @@ export function rateLimit(options: RateLimiterOptions): RequestHandler {
     let window = windows.get(key);
 
     if (!window || window.resetAt <= at) {
-      // Sweep on rollover rather than on a timer: no unref'd interval to keep
-      // the process alive, and the work is proportional to what is stale.
-      if (windows.size >= MAX_TRACKED_CLIENTS) prune(at);
+      makeRoom(at);
       window = { count: 0, resetAt: at + windowMs };
+      // Delete first: `Map.set` on an existing key keeps its original
+      // insertion position, which would make insertion order diverge from
+      // window-start order and evict the wrong entry.
+      windows.delete(key);
       windows.set(key, window);
     }
 
@@ -193,6 +245,8 @@ export function rateLimit(options: RateLimiterOptions): RequestHandler {
 
     next();
   };
+
+  return Object.assign(handler, { trackedClients: () => windows.size });
 }
 
 /**

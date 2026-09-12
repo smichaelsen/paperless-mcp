@@ -10,12 +10,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createMcpHttpApp } from "../../src/http/app";
+import type { NextFunction, Request, Response } from "express";
 import {
   DEFAULT_MAX_BODY,
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW_MS,
   HttpLimitsConfig,
   MAX_BODY_ENV,
+  MAX_TRACKED_CLIENTS,
+  rateLimit,
   RATE_LIMIT_MAX_ENV,
   RATE_LIMIT_WINDOW_ENV,
   resolveHttpLimits,
@@ -280,6 +283,155 @@ describe("rate limiting", () => {
       event: "http_request_rejected",
       reason: "rate_limited",
     });
+  });
+});
+
+/**
+ * The limiter's own memory.
+ *
+ * A review drove 25,000 distinct addresses through a single window against an
+ * earlier version and nothing was evicted: `MAX_TRACKED_CLIENTS` triggered a
+ * sweep of *expired* entries, which does nothing inside one window, so the map
+ * grew without bound keyed by attacker-controlled source address. These tests
+ * pin the cap as a cap.
+ *
+ * Driven through the middleware directly rather than over sockets: the
+ * property under test is the size of a Map after N distinct remote addresses,
+ * and opening 25,000 real connections would only make it slower.
+ */
+describe("the tracked-client cap", () => {
+  /** A request carrying nothing but the one field `clientKey` reads. */
+  function requestFrom(address: string): Request {
+    return { socket: { remoteAddress: address } } as unknown as Request;
+  }
+
+  function responseSpy(): Response & { status_: number | undefined } {
+    const res = {
+      status_: undefined as number | undefined,
+      setHeader() {},
+      status(code: number) {
+        res.status_ = code;
+        return res;
+      },
+      json() {
+        return res;
+      },
+    };
+    return res as unknown as Response & { status_: number | undefined };
+  }
+
+  /** Returns the status the limiter set, or `undefined` if it called next(). */
+  function send(
+    handler: (req: Request, res: Response, next: NextFunction) => void,
+    address: string
+  ): number | undefined {
+    const res = responseSpy();
+    let passed = false;
+    handler(requestFrom(address), res, (() => {
+      passed = true;
+    }) as NextFunction);
+    return passed ? undefined : res.status_;
+  }
+
+  it("stops growing at the cap instead of tracking every address", () => {
+    const handler = rateLimit({
+      max: 10,
+      windowMs: 60_000,
+      maxTrackedClients: 50,
+    });
+
+    // All inside one window, so nothing expires and only a real cap can bound
+    // this. Before the fix, `trackedClients()` here was 2000.
+    for (let i = 0; i < 2000; i += 1) send(handler, `10.0.${i >> 8}.${i & 255}`);
+
+    expect(handler.trackedClients()).toBe(50);
+  });
+
+  it("evicts the oldest window, and only the oldest", () => {
+    const handler = rateLimit({
+      max: 1,
+      windowMs: 60_000,
+      maxTrackedClients: 3,
+    });
+
+    // Three clients fill the map; each has now used its single request.
+    expect(send(handler, "a")).toBeUndefined();
+    expect(send(handler, "b")).toBeUndefined();
+    expect(send(handler, "c")).toBeUndefined();
+    expect(handler.trackedClients()).toBe(3);
+    expect(send(handler, "c")).toBe(429);
+
+    // A fourth address evicts exactly one entry: the oldest, "a".
+    expect(send(handler, "d")).toBeUndefined();
+    expect(handler.trackedClients()).toBe(3);
+    // "b" and "c" are untouched — still counted, still limited.
+    expect(send(handler, "b")).toBe(429);
+    expect(send(handler, "c")).toBe(429);
+    // "a" was evicted, so it starts a fresh window. This is the documented
+    // cost of eviction: a counter reset, never a lockout.
+    expect(send(handler, "a")).toBeUndefined();
+  });
+
+  it("prefers sweeping expired windows over evicting live ones", () => {
+    let clock = 0;
+    const handler = rateLimit({
+      max: 1,
+      windowMs: 100,
+      maxTrackedClients: 3,
+      now: () => clock,
+    });
+
+    send(handler, "a");
+    send(handler, "b");
+    send(handler, "c");
+    expect(handler.trackedClients()).toBe(3);
+
+    // Past every window's end: a new arrival sweeps all three rather than
+    // evicting one and leaving two stale entries behind.
+    clock = 500;
+    send(handler, "d");
+    expect(handler.trackedClients()).toBe(1);
+  });
+
+  it("treats a rolled-over window as recent, not as its original insertion", () => {
+    // `Map.set` on a key that already exists keeps its *original* insertion
+    // position. Without the `delete` before the `set` on rollover, a client
+    // that has been active all along keeps the position it had on its very
+    // first request and is evicted ahead of entries whose windows started
+    // later — eviction would stop meaning "oldest window".
+    let clock = 0;
+    const handler = rateLimit({
+      max: 1,
+      windowMs: 100,
+      maxTrackedClients: 3,
+      now: () => clock,
+    });
+
+    send(handler, "a"); //   window a: [0, 100)
+    clock = 30;
+    send(handler, "b"); //   window b: [30, 130)
+    clock = 110;
+    send(handler, "a"); //   a rolls over: window a: [110, 210)
+    clock = 115;
+    send(handler, "c"); //   window c: [115, 215)
+    expect(handler.trackedClients()).toBe(3);
+
+    // A fourth address at 120, with nothing expired: exactly one live entry is
+    // evicted, and it must be the one whose *window* started earliest — "b" at
+    // 30, not "a", whose window restarted at 110.
+    clock = 120;
+    send(handler, "d");
+    expect(handler.trackedClients()).toBe(3);
+
+    clock = 125;
+    // "a" survived, so its count is still spent and it is limited. If the
+    // rollover had left "a" in its original first position, "a" would have
+    // been evicted here instead and this would pass through.
+    expect(send(handler, "a")).toBe(429);
+  });
+
+  it("keeps a sane production default", () => {
+    expect(MAX_TRACKED_CLIENTS).toBe(10_000);
   });
 });
 

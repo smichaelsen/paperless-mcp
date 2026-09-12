@@ -81,19 +81,32 @@ export function secretsMatch(candidate: string, expected: string): boolean {
 /**
  * Pull the credential out of an `Authorization` header.
  *
- * Returns `undefined` for every malformed case — absent, duplicated, not
- * `Bearer`, no credential after the scheme. The caller must answer all of them
- * identically to a *wrong* secret; distinguishing them tells a prober which
- * half of its guess to fix.
+ * Returns `undefined` for every malformed case — absent, not `Bearer`, no
+ * credential after the scheme. The caller must answer all of them identically
+ * to a *wrong* secret; distinguishing them tells a prober which half of its
+ * guess to fix.
  *
  * The scheme is matched case-insensitively (RFC 9110 §11.1: auth-scheme is
  * case-insensitive), the credential is not.
+ *
+ * ## Duplicate headers are *not* rejected here
+ *
+ * Node discards repeated `Authorization` headers and keeps the first, so
+ * `req.headers.authorization` is a string whenever the header is present at
+ * all (verified on v22.22.0: two headers, `[correct, wrong]`, authenticates
+ * on the first and succeeds). Both copies survive in `req.rawHeaders`, but
+ * nothing here looks at that, so **this server does not reject a duplicated
+ * credential** — it authenticates against the first one. Not a weakness: an
+ * attacker who can supply a correct value in either position already has the
+ * secret.
+ *
+ * The non-string branch below is therefore defensive, unreachable over HTTP as
+ * Node parses it today, and kept only against a future framework or transport
+ * that does surface repeated headers as an array.
  */
 export function bearerCredential(
   header: string | string[] | undefined
 ): string | undefined {
-  // Node concatenates repeated headers for most fields but keeps some as an
-  // array; either way, two Authorization headers are not a valid request.
   if (typeof header !== "string") return undefined;
   const match = /^[Bb][Ee][Aa][Rr][Ee][Rr] +(.+)$/.exec(header.trim());
   if (!match) return undefined;

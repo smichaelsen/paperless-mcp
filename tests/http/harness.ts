@@ -79,7 +79,8 @@ export function rawRequest(options: {
   port: number;
   path: string;
   method?: string;
-  headers?: Record<string, string>;
+  /** An array value writes the header twice, as two lines on the wire. */
+  headers?: Record<string, string | string[]>;
   body?: string;
 }): Promise<{ status: number; headers: Record<string, unknown>; body: string }> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires

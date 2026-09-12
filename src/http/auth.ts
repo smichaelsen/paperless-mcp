@@ -3,11 +3,15 @@
  *
  * ## One answer for every failure
  *
- * Missing header, two headers, `Basic` instead of `Bearer`, `Bearer` with
- * nothing after it, and a syntactically perfect but wrong secret all produce
- * the *same* 401 with the *same* body. Anything else is an oracle: a prober
- * that can tell "malformed" from "wrong" learns that its transport framing is
- * right and can concentrate on the secret.
+ * Missing header, `Basic` instead of `Bearer`, `Bearer` with nothing after it,
+ * and a syntactically perfect but wrong secret all produce the *same* 401 with
+ * the *same* body. Anything else is an oracle: a prober that can tell
+ * "malformed" from "wrong" learns that its transport framing is right and can
+ * concentrate on the secret.
+ *
+ * A *duplicated* `Authorization` header is not among these: Node keeps the
+ * first and discards the rest, so the first copy is what gets authenticated.
+ * See `bearerCredential`.
  *
  * The body names no variable either — unlike the Host/Origin rejection, which
  * points at `PAPERLESS_MCP_ALLOWED_HOSTS`, because a Host allowlist is
