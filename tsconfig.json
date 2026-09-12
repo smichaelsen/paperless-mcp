@@ -104,5 +104,8 @@
     /* Completeness */
     // "skipDefaultLibCheck": true,                      /* Skip type checking .d.ts files that are included with TypeScript. */
     "skipLibCheck": true /* Skip type checking all .d.ts files. */
-  }
+  },
+  /* Only the server sources are compiled into build/. Tests live in tests/ and are run by vitest. */
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "build", "tests"]
 }
