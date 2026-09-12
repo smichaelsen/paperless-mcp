@@ -107,7 +107,7 @@ is not even read in that case. In `--http` mode the environment is the only sour
 | `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
 | `PAPERLESS_ALLOW_WRITES` | Register the write-class tools. Off by default — see [Tool access modes](#tool-access-modes). |
 | `PAPERLESS_ALLOW_DESTRUCTIVE` | Register the destructive-class tools. Off by default, and never implied by `PAPERLESS_ALLOW_WRITES`. |
-| `PAPERLESS_MCP_ALLOWED_HOSTS` | `--http` only. Comma-separated hostnames accepted in the `Host` header. Default: `localhost,127.0.0.1,[::1]`. `*` disables the check. |
+| `PAPERLESS_MCP_ALLOWED_HOSTS` | `--http` only. Comma-separated hostnames accepted in the `Host` header (ports ignored). **Replaces** the default `localhost,127.0.0.1,[::1]` rather than extending it. `*` disables the check. |
 | `PAPERLESS_MCP_ALLOWED_ORIGINS` | `--http` only. Comma-separated origins accepted in the `Origin` header. Default: none — a request carrying *any* `Origin` is rejected, while requests without one (every non-browser MCP client) pass. `*` disables the check. |
 
 `PAPERLESS_API_TOKEN_FILE` is meant for Docker/Kubernetes secrets: the file is read once
@@ -739,15 +739,24 @@ event stream, closed with the stream.
 #### DNS-rebinding protection
 
 Any web page can POST to `http://localhost:3000/mcp`, so the `Host` and `Origin` headers
-are validated before a request reaches a transport. The defaults only allow loopback
-hostnames and reject every browser origin; see `PAPERLESS_MCP_ALLOWED_HOSTS` and
+are validated before a request reaches a transport. By default only loopback *hostnames*
+are accepted and every browser origin is rejected; see `PAPERLESS_MCP_ALLOWED_HOSTS` and
 `PAPERLESS_MCP_ALLOWED_ORIGINS` under [Configuration](#configuration).
 
+> [!WARNING]
+> This is a header check, **not** an access control and **not** a network restriction.
+> The server currently listens on all interfaces and has no authentication, so anyone
+> who can reach the port can use the full Paperless tool surface by sending
+> `Host: localhost`. Bind the port to loopback yourself (or keep it behind a firewall)
+> until private binding lands. What the check does stop is the DNS-rebinding case: a
+> browser cannot be tricked into driving the server from a page on another origin.
+
 If you reach the server under any other name — a Docker service name, a reverse proxy —
-add it, otherwise requests are answered with `403`:
+add it, otherwise requests are answered with `403`. The variable **replaces** the default
+list rather than extending it, so keep the loopback names if you still connect that way:
 
 ```
-PAPERLESS_MCP_ALLOWED_HOSTS=paperless-mcp,mcp.example
+PAPERLESS_MCP_ALLOWED_HOSTS=localhost,127.0.0.1,[::1],paperless-mcp
 ```
 
 The allowlists in effect are printed at startup:
