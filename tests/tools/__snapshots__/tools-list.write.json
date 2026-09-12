@@ -45,7 +45,7 @@
           "type": "number"
         },
         "method": {
-          "description": "The bulk operation to perform: set_correspondent (assign sender/receiver), set_document_type (categorize documents), set_storage_path (organize file location), add_tag/remove_tag/modify_tags (manage labels), reprocess (re-run OCR/indexing), merge (combine documents into a new one, keeping the originals), split (separate into multiple documents, keeping the original), rotate (adjust orientation). Deleting documents or pages and replacing permissions are not available: this server was not started with destructive operations enabled.",
+          "description": "The bulk operation to perform: set_correspondent (assign sender/receiver), set_document_type (categorize documents), set_storage_path (organize file location), add_tag/remove_tag/modify_tags (manage labels), reprocess (re-run OCR/indexing), merge (combine documents into a new one, keeping the originals), split (separate one document into several along the ranges given in 'pages', keeping the original), rotate (adjust orientation). Deleting documents or pages and replacing permissions are not available: this server was not started with destructive operations enabled.",
           "enum": [
             "set_correspondent",
             "set_document_type",
@@ -58,6 +58,10 @@
             "split",
             "rotate"
           ],
+          "type": "string"
+        },
+        "pages": {
+          "description": "Page specification for the 'split' method: comma-separated page ranges, each of which becomes a new document. '1-2,3-4' splits a four-page document into two. Required by 'split' and ignored by every other method available here.",
           "type": "string"
         },
         "remove_tags": {

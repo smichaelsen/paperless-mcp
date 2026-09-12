@@ -133,6 +133,12 @@ export function closedSchemaRegistrar(
     tool(name, description, shape, handler) {
       // Throws for a tool with no policy entry: an unclassified tool must not
       // fall through into the read-only surface.
+      //
+      // The annotations come from the ungated policy on purpose. A gate may
+      // narrow what a tool can do, and the annotation then describes the wider
+      // form — over-warning, never under-warning. For the one gated tool it is
+      // accurate either way: narrowed `bulk_edit_documents` still removes tags
+      // (`destructiveHint`) and still repeats `rotate` (`idempotentHint`).
       const annotations = policyFor(name).annotations;
       const gated = gateRegistration(
         { name, description, shape, handler },
