@@ -76,9 +76,22 @@ async function main() {
   // process runs, and re-resolving it would repeat its warnings on every
   // request.
   const toolAccess = resolveToolAccess();
+  // The advertised surface is identical for every connection, so it is logged
+  // once at startup rather than from inside registration — which under `--http`
+  // runs per request and would repeat this line on every one.
+  let modeLogged = false;
   const createServer = (): McpServer => {
     const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
-    registerAllTools(server, api, toolAccess);
+    const registered = registerAllTools(server, api, toolAccess);
+    if (!modeLogged) {
+      modeLogged = true;
+      log("info", "tool_access_mode", {
+        mode: toolAccess.label,
+        writes: toolAccess.writes,
+        destructive: toolAccess.destructive,
+        tools: registered.length,
+      });
+    }
     return server;
   };
 
