@@ -61,7 +61,7 @@
           "type": "string"
         },
         "pages": {
-          "description": "Page specification for the 'split' method: comma-separated page ranges, each of which becomes a new document. '1-2,3-4' splits a four-page document into two. Required by 'split' and ignored by every other method available here.",
+          "description": "Page specification for the 'split' method: comma-separated page ranges, each of which becomes a new document. '1-2,3-4' splits a four-page document into two. Required by 'split', and send it only with 'split': Paperless rejects the whole request when an argument is passed to a method that does not take it.",
           "type": "string"
         },
         "remove_tags": {
