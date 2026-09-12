@@ -126,7 +126,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 LABEL org.opencontainers.image.title="paperless-mcp" \
       org.opencontainers.image.description="MCP server for Paperless-ngx" \
       org.opencontainers.image.source="https://github.com/smichaelsen/paperless-mcp" \
-      org.opencontainers.image.licenses="ISC"
+      org.opencontainers.image.licenses="MIT"
 
 # Exec form, so node is the process that receives signals rather than a shell.
 # Node as PID 1 still ignores SIGTERM (the kernel applies no default action to

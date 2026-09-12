@@ -2,7 +2,6 @@ name: Docker Publish
 on:
   push:
     branches:
-      - master
       - main
 
 jobs:
@@ -25,7 +24,14 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.actor }}/${{ github.repository }}
+          # `github.repository` is already "owner/repo". The inherited upstream
+          # version prefixed it with `github.actor` as well, which produced
+          # ghcr.io/<owner>/<owner>/<repo> — a package named "<owner>/<repo>"
+          # under the owner's namespace, not the path anyone would guess or
+          # pull. `github.actor` is also whoever pushed the commit, so the
+          # path moved with the pusher. The repository slug is the only
+          # correct source for both segments.
+          images: ghcr.io/${{ github.repository }}
           flavor: |
             latest=true
       - name: Build and push Docker image

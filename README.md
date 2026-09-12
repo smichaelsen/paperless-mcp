@@ -70,9 +70,23 @@ is released.
 ## Quick Start
 
 ### Installation
+
+> [!IMPORTANT]
+> **Not on npm yet.** The package name is `@smichaelsen/paperless-mcp`, and the
+> first release has not been cut, so `npm install` of it fails with `E404` until
+> it has. Until then, install from the repository — see
+> [From a Git checkout](#from-a-git-checkout) below, or use the
+> [container image](#container-deployment). The commands in this section are
+> the ones that work once the package is published; see
+> [RELEASING.md](RELEASING.md) for what publishing involves.
+>
+> The unscoped name `paperless-mcp`, which earlier versions of this README told
+> you to install, is upstream's package. It was unpublished on 2024-12-28 and
+> has returned `404` ever since. It is not this project and never was.
+
 1. Install the MCP server:
 ```bash
-npm install -g paperless-mcp
+npm install -g @smichaelsen/paperless-mcp
 ```
 
 2. Add it to your Claude's MCP configuration:
@@ -83,7 +97,7 @@ For VSCode extension, edit `~/Library/Application Support/Code/User/globalStorag
   "mcpServers": {
     "paperless": {
       "command": "npx",
-      "args": ["paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
+      "args": ["-y", "@smichaelsen/paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
     }
   }
 }
@@ -95,11 +109,15 @@ For Claude desktop app, edit `~/Library/Application Support/Claude/claude_deskto
   "mcpServers": {
     "paperless": {
       "command": "npx",
-      "args": ["paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
+      "args": ["-y", "@smichaelsen/paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
     }
   }
 }
 ```
+
+The package installs a single executable called `paperless-mcp`, so after a
+global install you can also point `command` straight at `paperless-mcp` and
+drop the package name from `args`.
 
 3. Get your API token:
    1. Log into your Paperless-NGX instance
@@ -112,6 +130,21 @@ For Claude desktop app, edit `~/Library/Application Support/Claude/claude_deskto
    - `your-api-token` with the token you just generated
 
 That's it! Now you can ask Claude to help you manage your Paperless-NGX documents.
+
+#### From a Git checkout
+
+Works today, and is what you want either way if you intend to change anything:
+
+```bash
+git clone https://github.com/smichaelsen/paperless-mcp.git
+cd paperless-mcp
+npm ci
+npm run build
+npm link          # puts `paperless-mcp` on your PATH, pointing at this checkout
+```
+
+Then use `"command": "paperless-mcp"` with no package name in `args`, or point
+`command` straight at `<checkout>/build/index.js` with `node`.
 
 ## Configuration
 
@@ -149,7 +182,7 @@ enough. Neither secret can be passed on the command line — an argument is visi
 ```yaml
 services:
   paperless-mcp:
-    image: paperless-mcp
+    image: ghcr.io/smichaelsen/paperless-mcp:latest
     # No `ports:` — nothing is published to the host. Other services on this
     # network reach the server at http://paperless-mcp:3000/mcp; anything
     # outside it goes through a reverse proxy that terminates TLS.
@@ -787,6 +820,33 @@ docker run --rm --init \
 default signal action to PID 1, so without an init `docker stop` waits for the
 full timeout and then SIGKILLs. The Compose example sets `init: true`.
 
+### The published image
+
+Every push to `main` builds the image and pushes it to the GitHub Container
+Registry (`.github/workflows/docker-publish.yml`):
+
+```bash
+docker pull ghcr.io/smichaelsen/paperless-mcp:latest
+```
+
+Two tags are published: `latest`, and the branch name `main`. They point at the
+same digest. There is no version tag yet — the image tracks `main`, not a
+release.
+
+> [!NOTE]
+> Before the fix in [#28](https://github.com/smichaelsen/paperless-mcp/issues/28)
+> the workflow pushed to `ghcr.io/smichaelsen/smichaelsen/paperless-mcp`: the
+> owner segment was doubled, because the inherited upstream workflow joined
+> `github.actor` with `github.repository`, and the latter already contains the
+> owner. That older path still exists in the registry and is frozen at whatever
+> was last pushed to it. Pull the single-owner path above.
+>
+> The corrected path is a **new** package, created by the first push to `main`
+> after that fix. GitHub may create it as private, in which case an anonymous
+> `docker pull` is denied until its visibility is switched to public under
+> *Packages → paperless-mcp → Package settings*. Check that once, after the
+> first push.
+
 ### Hardened Compose example
 
 [`compose.example.yaml`](compose.example.yaml) is the recommended deployment.
@@ -1144,3 +1204,28 @@ The allowlists in effect are printed at startup:
 ```json
 {"level":"info","event":"http_server_listening","address":"127.0.0.1","port":3000,"transport":"streamable-http","session_mode":"stateless","auth":"bearer (PAPERLESS_MCP_AUTH_TOKEN_FILE)","legacy_sse":"disabled","max_body":"10mb","rate_limit":"600/60000ms","allowed_hosts":"localhost,127.0.0.1,[::1]","allowed_origins":"(none)"}
 ```
+
+## License and attribution
+
+This project is released under the [MIT License](LICENSE).
+
+It is a hard fork of [`nloui/paperless-mcp`](https://github.com/nloui/paperless-mcp),
+and parts of the tree are still derived from that work — most of
+`src/api/PaperlessAPI.ts` and of the document, tag, correspondent and
+document-type tool modules. Upstream ships no LICENSE file; its `package.json`
+declares `"license": "ISC"` and `"author": "Nick Loui"`, and has since its first
+commit. The [LICENSE](LICENSE) file in this repository applies MIT to the
+project as a whole and reproduces the ISC terms and the upstream copyright
+attribution alongside it, which is the conventional way to redistribute
+permissively licensed code you did not write. Read it before relying on the
+licensing of this project — including the part explaining which pieces of that
+notice had to be reconstructed, because upstream never published one.
+
+There are no upstream pull requests and no attempt to stay mergeable with
+upstream; the two trees have diverged substantially.
+
+## Releasing
+
+See [RELEASING.md](RELEASING.md). In short: bump the version on `main`, then
+create a GitHub release whose tag matches it, and
+`.github/workflows/npm-publish.yml` runs the quality gate and publishes to npm.

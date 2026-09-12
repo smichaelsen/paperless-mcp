@@ -29,11 +29,15 @@
     "model-context-protocol",
     "paperless"
   ],
-  "author": "Nick Loui",
-  "license": "ISC",
+  "author": "Sebastian Michaelsen",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/smichaelsen/paperless-mcp.git"
+  },
+  "homepage": "https://github.com/smichaelsen/paperless-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/smichaelsen/paperless-mcp/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
