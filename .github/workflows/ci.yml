@@ -48,6 +48,32 @@ jobs:
           test -f build/index.js
           head -1 build/index.js | grep -q '^#!/usr/bin/env node'
 
+      - name: Verify the tarball ships the licence, the notice and the bin
+        # npm auto-includes package.json, README and LICENSE and nothing else,
+        # so NOTICE ships only because `files` in package.json names it. Drop it
+        # from `files` and the package goes out with none of the upstream ISC
+        # attribution it exists to carry — while the build succeeds and every
+        # test passes. That failure is invisible without a pack, so pack.
+        #
+        # A real `npm pack` read back with tar, rather than the cheaper
+        # `npm pack --dry-run --json`: the dry run reports what npm intends to
+        # include, and this step is worth having only if it asserts on the bytes
+        # that would actually be published.
+        run: |
+          mkdir -p "$RUNNER_TEMP/packcheck"
+          npm pack --pack-destination "$RUNNER_TEMP/packcheck" >/dev/null
+          tarball="$(find "$RUNNER_TEMP/packcheck" -name '*.tgz')"
+          contents="$(tar -tzf "$tarball")"
+          echo "$contents"
+          status=0
+          for entry in package/LICENSE package/NOTICE package/build/index.js; do
+            if ! printf '%s\n' "$contents" | grep -qxF "$entry"; then
+              echo "::error::$entry is missing from the published tarball"
+              status=1
+            fi
+          done
+          exit "$status"
+
   audit:
     name: Production dependency audit
     runs-on: ubuntu-latest

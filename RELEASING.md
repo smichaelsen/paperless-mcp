@@ -54,6 +54,13 @@ before cutting one — the workflow cannot do it for you.
    `--prerelease` (or tick the box) for a release candidate: the workflow then
    publishes it under the npm dist-tag `next` instead of `latest`, so a plain
    `npm install` keeps resolving to the last stable version.
+
+   > **The first release must not be a pre-release.** A pre-release publishes
+   > to `next` and leaves the package with no `latest` dist-tag at all, so
+   > `npm install -g @smichaelsen/paperless-mcp` and the `npx` snippets — both
+   > documented in the README — would resolve to nothing. That is the very
+   > defect this whole process exists to fix. Pre-releases are only safe once a
+   > `latest` exists for them to sit beside.
 4. Watch the run: `gh run watch --repo smichaelsen/paperless-mcp`. It
    type-checks, runs the unit tests, builds, verifies the bin shebang survived
    the build and audits production dependencies — on Node 22 and 24 — before it
