@@ -5,9 +5,11 @@
  * flight. Each client must get the payload for the tool *it* asked for.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PaperlessAPI } from "../../src/api/PaperlessAPI";
+import { toolAccessMode } from "../../src/config/toolAccess";
 import { createMcpHttpApp } from "../../src/http/app";
 import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
 import { registerAllTools } from "../../src/mcp/registerTools";
@@ -101,27 +103,49 @@ describe("concurrent clients on the real tool surface", () => {
     expect(textOf(correspondents)).not.toContain("TAG-ALPHA");
   });
 
-  it("advertises the same tool surface over HTTP as over stdio", async () => {
-    const api = new PaperlessAPI(PAPERLESS_URL, "s3cr3t-token-value");
-    running = await startApp(
-      createMcpHttpApp({
-        createServer: () => {
-          const server = new McpServer({
-            name: "paperless-ngx",
-            version: "1.0.0",
-          });
-          registerAllTools(server, api);
-          return server;
-        },
-        security: SECURITY,
-      })
-    );
+  it.each([
+    ["read-only", toolAccessMode(false, false)],
+    ["write", toolAccessMode(true, false)],
+    ["destructive", toolAccessMode(true, true)],
+  ])(
+    "advertises the same %s tool surface over HTTP as in-process",
+    async (_label, mode) => {
+      const api = new PaperlessAPI(PAPERLESS_URL, "s3cr3t-token-value");
+      const build = (): McpServer => {
+        const server = new McpServer({
+          name: "paperless-ngx",
+          version: "1.0.0",
+        });
+        registerAllTools(server, api, mode);
+        return server;
+      };
 
-    const client = await connectClient(running.url, "client-a");
-    clients.push(client);
+      // The reference: the same registration over an in-memory transport, the
+      // way stdio runs it. Compared by name list rather than a hard-coded
+      // count, so gating changes in #9's table cannot silently drift this.
+      const reference = new Client({ name: "reference", version: "1.0.0" });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        build().connect(serverTransport),
+        reference.connect(clientTransport),
+      ]);
+      clients.push(reference);
+      const expected = (await reference.listTools()).tools
+        .map((tool) => tool.name)
+        .sort();
 
-    const { tools } = await client.listTools();
-    expect(tools).toHaveLength(20);
-    expect(tools.map((tool) => tool.name)).toContain("list_tags");
-  });
+      running = await startApp(
+        createMcpHttpApp({ createServer: build, security: SECURITY })
+      );
+      const client = await connectClient(running.url, "client-a");
+      clients.push(client);
+      const actual = (await client.listTools()).tools
+        .map((tool) => tool.name)
+        .sort();
+
+      expect(actual).toEqual(expected);
+      expect(actual).toContain("list_tags");
+    }
+  );
 });
