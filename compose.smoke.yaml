@@ -1,0 +1,43 @@
+# Smoke-test overlay for compose.example.yaml.
+#
+# The example is a *production* deployment: it pulls a published image and
+# points at a real Paperless. Neither is available in a checkout, which is why
+# the documented smoke test runs the example with this overlay on top:
+#
+#   docker compose -f compose.example.yaml -f compose.smoke.yaml up -d --build
+#
+# It changes exactly three things and nothing about the hardening — every
+# `read_only`, `cap_drop`, `security_opt`, limit, `expose`-not-`ports` and
+# secret in the example still applies, which is what makes the run meaningful:
+#
+#   1. builds the image from this checkout instead of pulling it, under a local
+#      tag the rest of the smoke test can refer to;
+#   2. points PAPERLESS_URL at a stub upstream, so the run needs no real
+#      Paperless and — more usefully — so the *outage* case can be produced on
+#      demand by stopping one container;
+#   3. adds that stub.
+#
+# See README.md → "Container deployment" → "Smoke test" for the steps.
+
+services:
+  paperless-mcp:
+    image: paperless-mcp:smoke
+    build: .
+    environment:
+      PAPERLESS_URL: http://fake-paperless:8000
+    depends_on:
+      - fake-paperless
+
+  # Answers 200 with an empty JSON object on any path, which is all the
+  # readiness probe (a GET of the Paperless API root) needs to see. It runs the
+  # same image so the smoke test builds exactly one thing.
+  fake-paperless:
+    image: paperless-mcp:smoke
+    build: .
+    init: true
+    entrypoint:
+      - node
+      - -e
+      - "require('http').createServer((q,s)=>{s.writeHead(200,{'content-type':'application/json'});s.end('{}')}).listen(8000,'0.0.0.0')"
+    networks:
+      - mcp

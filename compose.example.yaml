@@ -1,0 +1,158 @@
+# Hardened Compose example for paperless-mcp (issue #10).
+#
+# Copy to `compose.yaml`, create the two secret files, adjust `PAPERLESS_URL`,
+# and run `docker compose up -d`. The smoke test that proves this file is
+# actually hardened is in README.md → "Container deployment" → "Smoke test".
+#
+# The shape of the deployment, and why:
+#
+#   * **No `ports:`.** Nothing is published to the host, so nothing is reachable
+#     from the LAN or the internet by default. Other services on the `mcp`
+#     network reach the server at `http://paperless-mcp:3000/mcp`; anything
+#     outside it goes through a reverse proxy or a tunnel that terminates TLS
+#     and that you attach to this network. This server speaks plain HTTP and
+#     never terminates TLS itself.
+#   * **The container is disposable.** It keeps no state: no volume, no
+#     database, no cache on disk. Deleting it and recreating it loses nothing.
+#   * **No Docker socket.** Nothing here needs the daemon, and mounting the
+#     socket would hand container-escape-equivalent privileges to a process
+#     whose whole job is to talk to a document server.
+#   * **No application-data mount.** The server reaches Paperless over HTTP; it
+#     has no business reading the Paperless media directory, and a read-only
+#     root filesystem means it could not write to one anyway.
+
+name: paperless-mcp
+
+services:
+  paperless-mcp:
+    # Pin a digest in production — `:latest` silently changes what you run.
+    #   image: ghcr.io/smichaelsen/paperless-mcp@sha256:<digest>
+    image: ghcr.io/smichaelsen/paperless-mcp:latest
+    # Or build it from this checkout instead:
+    #   build: .
+
+    # PID 1 in this image is node, and the kernel applies no default signal
+    # action to PID 1 — without an init, `docker compose stop` waits for the
+    # full timeout and then SIGKILLs. `init: true` puts a real init in front.
+    init: true
+    restart: unless-stopped
+
+    # Reachable on the Compose network, published nowhere. Deliberately not
+    # `ports:` — see the header.
+    expose:
+      - "3000"
+
+    # --- Runtime hardening ------------------------------------------------
+    # Nothing in this image writes to disk at runtime, so nothing needs to be
+    # writable. Combined with root-owned application files, the process cannot
+    # rewrite its own code even if it is taken over.
+    read_only: true
+    tmpfs:
+      # The only writable path, small and mounted with the three flags that
+      # stop it from being used to stage an executable.
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      # Blocks setuid binaries from gaining privileges — the standard escape
+      # route out of a dropped-capability, non-root process.
+      - no-new-privileges:true
+    # The image already declares `USER node`; stating it here means a rebuild
+    # that lost that line still cannot run this service as root.
+    user: "1000:1000"
+
+    # --- Resource limits --------------------------------------------------
+    # A runaway or attacker-driven process must not be able to take the host
+    # with it. Sized for a server that proxies JSON: raise `memory` if you use
+    # `post_document` with large files, which are base64-encoded in the request
+    # body and therefore held in memory.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+          # A fork bomb inside the container stops at this ceiling instead of
+          # exhausting the host's process table. Set here rather than as the
+          # older top-level `pids_limit:`, which Compose rejects alongside a
+          # `deploy.resources.limits` block.
+          pids: 128
+        reservations:
+          memory: 64M
+
+    # --- Log rotation -----------------------------------------------------
+    # Every rejected request logs a line. Without rotation a scan against this
+    # port fills the host disk, which is a denial of service on everything else
+    # running on it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    environment:
+      PAPERLESS_URL: https://paperless.example
+      PAPERLESS_API_TOKEN_FILE: /run/secrets/paperless_token
+
+      # The bearer secret every MCP client must present. Without it the server
+      # refuses to start (see README → Authentication).
+      PAPERLESS_MCP_AUTH_TOKEN_FILE: /run/secrets/paperless_mcp_auth
+
+      # The listener defaults to loopback, which inside a container means "not
+      # reachable from the Compose network at all". The container network is
+      # the boundary here and the bearer secret is the access control, so the
+      # listener binds the container's own interface.
+      PAPERLESS_MCP_BIND_ADDRESS: "0.0.0.0"
+
+      # This list REPLACES the default rather than extending it, so the
+      # loopback names have to stay: the image's HEALTHCHECK calls
+      # http://127.0.0.1:3000/healthz, and dropping them makes every container
+      # healthcheck a 403.
+      PAPERLESS_MCP_ALLOWED_HOSTS: "paperless-mcp,localhost,127.0.0.1,[::1]"
+
+      # Tool access mode. The default is read-only; widen it deliberately and
+      # only as far as you need. `PAPERLESS_ALLOW_DESTRUCTIVE` adds the tools
+      # that delete documents and is never implied by the line above it.
+      # PAPERLESS_ALLOW_WRITES: "true"
+      # PAPERLESS_ALLOW_DESTRUCTIVE: "true"
+
+    secrets:
+      - paperless_token
+      - paperless_mcp_auth
+
+    # Liveness, on purpose: a Paperless outage must not mark this container
+    # unhealthy and get it restarted. Poll /readyz from your proxy for that.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+    networks:
+      - mcp
+
+networks:
+  mcp:
+    # Attach your reverse proxy (or a tunnel container) to this network. Add
+    # `internal: true` if nothing on it needs outbound access — note that the
+    # MCP server itself does, since it calls Paperless.
+    driver: bridge
+
+secrets:
+  # File-backed secrets, mounted read-only at /run/secrets/<name> and never
+  # visible in `docker inspect`, in the process list or in shell history the
+  # way an environment variable or a CLI argument would be.
+  #
+  #   umask 077
+  #   printf '%s' '<your paperless api token>' > paperless_token.txt
+  #   openssl rand -base64 32 | tr -d '\n' > paperless_mcp_auth.txt
+  #
+  # Both files are covered by .dockerignore, and *.txt is in .gitignore.
+  paperless_token:
+    file: ./paperless_token.txt
+  paperless_mcp_auth:
+    file: ./paperless_mcp_auth.txt

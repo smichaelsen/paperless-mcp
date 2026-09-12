@@ -1,0 +1,50 @@
+# Dependency update visibility (issue #10).
+#
+# The point is visibility, not automation: the Dockerfile pins its base image by
+# digest, which is only maintainable if something opens a PR when that digest
+# moves. The same goes for the npm tree behind `npm audit --omit=dev` and for
+# the pinned action versions in the workflows.
+#
+# Nothing here merges anything. Every update arrives as a PR and goes through
+# the same CI gates (typecheck, tests on Node 22 and 24, build, production
+# audit) as any other change.
+version: 2
+updates:
+  # The runtime dependency tree. Grouped so that a week's patches are one PR to
+  # review rather than five — except majors, which change behaviour and are
+  # worth looking at one at a time.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      production-dependencies:
+        dependency-type: production
+        update-types: ["minor", "patch"]
+      development-dependencies:
+        dependency-type: development
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps(dev)"
+
+  # The base image digest in the Dockerfile. Weekly, because the upstream
+  # `node:24-bookworm-slim` tag is rebuilt roughly that often to pick up Debian
+  # security updates — which a digest pin would otherwise freeze out forever.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(docker)"
+
+  # The actions used by CI and the publish workflows. These run with repository
+  # credentials, so a stale one is a supply-chain problem rather than a
+  # compatibility one.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(ci)"

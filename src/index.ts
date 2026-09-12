@@ -141,6 +141,11 @@ async function main() {
       security,
       limits,
       enableLegacySse,
+      // Readiness asks Paperless the cheapest authenticated question there is,
+      // the API root, and reports only whether it answered. The probe is built
+      // here rather than in `health.ts` so that module never sees the base URL
+      // or the token and cannot leak either into an unauthenticated response.
+      health: { probeUpstream: (signal) => api.request("/", { signal }) },
     });
     app.listen(port, bindAddress, () => {
       // stderr via log(): stdout is the MCP framing channel under stdio.
