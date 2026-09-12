@@ -1,2 +1,29 @@
+# The build stage copies only package files, tsconfig.json and src/, so this
+# list is defence in depth rather than the only thing keeping the context small.
+# It still matters: everything here would otherwise be sent to the daemon, and
+# anything sent can end up in a layer by accident.
+
+.git
+.github
+.claude
+.cursor
+
 node_modules
-build 
+build
+
+tests
+*.test.ts
+
+# Local secrets for the Compose example. These must never reach a build context.
+*.txt
+.env
+.env.*
+secrets/
+
+README.md
+CLAUDE.md
+compose.example.yaml
+compose.smoke.yaml
+Dockerfile
+.dockerignore
+.gitignore

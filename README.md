@@ -741,6 +741,229 @@ What they do:
   named `mcp-it-<random>-…` and is removed again in the cleanup hook, including
   on failure. Pre-existing objects are never modified.
 
+## Container deployment
+
+### The image
+
+`Dockerfile` builds a three-stage image whose final stage contains the compiled
+JavaScript, the production dependency tree, and nothing else.
+
+| | |
+| --- | --- |
+| Base | `node:24-bookworm-slim`, **pinned by digest** |
+| Runs as | `node` (uid 1000) — never root |
+| Not in the final stage | TypeScript, vitest, ts-node, the `src/` tree, the test suite, npm/npx/corepack |
+| Writable paths | none; the Compose example mounts the root filesystem read-only |
+| Persistent state | none — no volume is needed, and deleting the container loses nothing |
+
+**Why Node 24 and why a digest.** Node 20 reached end of life in April 2026, so
+the previous `node:20-slim` base had stopped getting security fixes; 24 is the
+active LTS line and CI runs the suite on both 22 and 24. The base is pinned by
+the digest of the multi-arch OCI *index* (so it still resolves on amd64 and
+arm64) rather than by the tag alone, because `node:24-bookworm-slim` names a
+different image every few days — a tag-only pin makes builds unreproducible and
+makes "what is actually running in production" unanswerable. The tag is kept
+next to the digest as documentation; Docker uses the digest. Dependabot
+(`.github/dependabot.yml`) watches npm, this Dockerfile and the GitHub Actions
+used by CI, and opens a PR when any of them moves — which is what makes a digest
+pin maintainable rather than a way to freeze in old Debian packages.
+
+npm, npx and corepack are deleted from the final stage: a running MCP server
+never uses them, npm carries a large dependency tree of its own that would show
+up in every image scan, and a process that manages to execute in the container
+then has no package installer to hand.
+
+```
+docker build -t paperless-mcp .
+
+docker run --rm --init \
+  -e PAPERLESS_URL=https://paperless.example \
+  -e PAPERLESS_API_TOKEN=<token> \
+  -p 127.0.0.1:3000:3000 \
+  paperless-mcp
+```
+
+`--init` matters: PID 1 in this image is `node`, and the kernel applies no
+default signal action to PID 1, so without an init `docker stop` waits for the
+full timeout and then SIGKILLs. The Compose example sets `init: true`.
+
+### Hardened Compose example
+
+[`compose.example.yaml`](compose.example.yaml) is the recommended deployment.
+Copy it to `compose.yaml`, create the two secret files it documents, and adjust
+`PAPERLESS_URL`.
+
+| Control | Setting |
+| --- | --- |
+| Published host port | **none** — `expose: ["3000"]`, no `ports:` |
+| Root filesystem | `read_only: true`, with a single `noexec,nosuid,nodev` tmpfs on `/tmp` |
+| Capabilities | `cap_drop: [ALL]` |
+| Privilege escalation | `security_opt: [no-new-privileges:true]` |
+| User | `user: "1000:1000"`, on top of the image's own `USER node` |
+| Resources | 1 CPU, 256 MB, 128 PIDs |
+| Restart policy | `unless-stopped` |
+| Log rotation | `json-file`, 10 MB × 3 |
+| Docker socket | not mounted |
+| Application-data mounts | none — the only mounts are the two read-only secret files |
+| Secrets | Docker secrets via `PAPERLESS_API_TOKEN_FILE` and `PAPERLESS_MCP_AUTH_TOKEN_FILE` |
+
+Nothing is published to the host, so the server is not reachable from the LAN
+or the internet by default. Other services on the Compose network reach it at
+`http://paperless-mcp:3000/mcp`; anything beyond that network goes through a
+reverse proxy or tunnel attached to the same network, which is also what
+terminates TLS — this server speaks plain HTTP and never terminates TLS itself.
+
+Two settings in the file are load-bearing and easy to get wrong:
+
+- `PAPERLESS_MCP_BIND_ADDRESS: "0.0.0.0"`. The listener binds loopback by
+  default, which *inside a container* means "not reachable from the Compose
+  network at all". The container network is the boundary here and the bearer
+  secret is the access control.
+- `PAPERLESS_MCP_ALLOWED_HOSTS` keeps the loopback names. That list **replaces**
+  the default rather than extending it, and the image's `HEALTHCHECK` calls
+  `http://127.0.0.1:3000/healthz` — drop `127.0.0.1` and every healthcheck
+  becomes a `403`.
+
+The tool access mode is read-only unless you say otherwise; the example has
+`PAPERLESS_ALLOW_WRITES` and `PAPERLESS_ALLOW_DESTRUCTIVE` commented out so
+widening the surface is a deliberate edit. See
+[Tool access modes](#tool-access-modes).
+
+### Health and readiness
+
+| Endpoint | Question | Success | Failure |
+| --- | --- | --- | --- |
+| `GET /healthz` | Is this process able to serve a request? | `200 {"status":"ok"}` | — |
+| `GET /readyz` | Is Paperless reachable and answering this server? | `200 {"status":"ok"}` | `503 {"status":"unavailable"}` |
+
+They answer two different questions on purpose. `/healthz` never touches
+Paperless: the only sensible reaction to it failing is a restart, and
+restarting the MCP server because *Paperless* is down turns one outage into a
+crash loop. So the container `HEALTHCHECK` polls `/healthz`, while `/readyz` is
+what a reverse proxy or load balancer should poll to stop routing traffic
+during an upstream outage. A Paperless outage therefore leaves the container
+`healthy` and `/readyz` at `503`.
+
+**They are reachable without credentials** — a Docker `HEALTHCHECK` or a
+Kubernetes probe cannot present a bearer token — so they say as little as it is
+possible to say: a status code and one fixed field. No version, no Paperless
+URL, no configuration, no upstream status code, no error text. Being exempt
+from authentication does not put them outside the rest of the boundary: they
+are registered after the app-wide middleware, so the `Host`/`Origin` check (and
+the rate limiter, once it lands) applies to them exactly as it does to `/mcp`.
+
+**`/readyz` caches its verdict**, for 10 s on success and 2 s on failure, and
+concurrent requests share a single in-flight probe. Without that, an
+unauthenticated endpoint would be an amplifier: one cheap request here would
+mean one authenticated request to Paperless, and anyone who could reach the port
+could use this server to hammer it. The shorter failure TTL is so that a
+recovering Paperless is picked up quickly. The upstream check itself is the
+cheapest authenticated call there is — the API root — with a 5 s deadline, and
+its result is reduced to a single bit before it reaches the response.
+
+### Smoke test
+
+This is the check the hardened example is expected to pass, and it runs as
+written from a clean checkout. It needs no real Paperless instance and no
+published image: [`compose.smoke.yaml`](compose.smoke.yaml) builds the image
+from the checkout and swaps in a stub upstream, changing nothing about the
+hardening in `compose.example.yaml` — which is the point, since a smoke test
+that relaxes what it is testing proves nothing. The stub also makes the
+*outage* case producible on demand, by stopping one container.
+
+```
+# 0. The two secrets the example expects. Both filenames are in .gitignore,
+#    and *.txt is in .dockerignore, so neither can reach a build context.
+umask 077
+printf '%s' 'not-a-real-paperless-token' > paperless_token.txt
+openssl rand -base64 32 | tr -d '\n' > paperless_mcp_auth.txt
+
+# A shorthand, since every step needs both files. A variable rather than an
+# alias, so the sequence also runs verbatim from a script:
+SMOKE="docker compose -f compose.example.yaml -f compose.smoke.yaml"
+
+# 1. Build and start
+$SMOKE up -d --build
+
+# 2. Not root
+$SMOKE exec paperless-mcp id
+#    uid=1000(node) gid=1000(node) groups=1000(node)
+
+# 3. No package manager and no dev dependencies. Assert on what is LEFT, not
+#    on a list of what was removed — the base image ships npm *and* Yarn 1
+#    under /opt, and a probe for `npm npx corepack` happily misses yarn.
+$SMOKE exec paperless-mcp ls /usr/local/bin /opt
+#    /opt:            (empty)
+#    /usr/local/bin:  node  nodejs
+$SMOKE exec paperless-mcp sh -c 'ls node_modules | grep -E "^(typescript|vitest|ts-node)$" || echo none'
+#    none
+
+# 4. Read-only root filesystem, writable tmpfs
+$SMOKE exec paperless-mcp sh -c 'touch /probe'      # Read-only file system
+$SMOKE exec paperless-mcp sh -c 'touch /tmp/probe'  # succeeds
+
+# 5. Nothing published to the host
+$SMOKE port paperless-mcp 3000                      # no host port
+
+# 6. Hardening actually applied
+docker inspect "$($SMOKE ps -q paperless-mcp)" \
+  --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{.HostConfig.Memory}} {{.HostConfig.PidsLimit}} {{.HostConfig.Init}}'
+#    true [ALL] [no-new-privileges:true] 268435456 128 true
+
+# 7. The probes answer without credentials, from another container on the
+#    network — nothing is published to the host. The network is <project>_mcp
+#    and the example sets `name: paperless-mcp`.
+docker run --rm --network paperless-mcp_mcp --entrypoint node paperless-mcp:smoke \
+  -e "fetch('http://paperless-mcp:3000/healthz').then(async r=>console.log(r.status, await r.text()))"
+#    200 {"status":"ok"}
+
+# 8. ...while every MCP route refuses the same caller
+docker run --rm --network paperless-mcp_mcp --entrypoint node paperless-mcp:smoke \
+  -e "fetch('http://paperless-mcp:3000/mcp',{method:'POST'}).then(r=>console.log(r.status))"
+#    401
+
+# 9. Readiness follows Paperless; liveness does not.
+#    Wait out the 10s success TTL first: /readyz keeps serving its last good
+#    verdict until the cache expires, so probing immediately after the stop
+#    correctly returns 200 and proves nothing. That caching is the feature —
+#    it is what stops an unauthenticated endpoint from being an amplifier —
+#    so this check has to respect it rather than race it.
+$SMOKE stop fake-paperless
+sleep 11
+docker run --rm --network paperless-mcp_mcp --entrypoint node paperless-mcp:smoke \
+  -e "const g=async p=>{const r=await fetch('http://paperless-mcp:3000/'+p);return r.status+' '+await r.text()};(async()=>{console.log('healthz ->',await g('healthz'));console.log('readyz  ->',await g('readyz'))})()"
+#    healthz -> 200 {"status":"ok"}
+#    readyz  -> 503 {"status":"unavailable"}
+$SMOKE ps                                           # still (healthy)
+
+# 10. Readiness does not amplify. Count upstream attempts, fire a burst,
+#     count again: 30 requests in, one request out.
+$SMOKE logs paperless-mcp | grep -c paperless_request_failed
+docker run --rm --network paperless-mcp_mcp --entrypoint node paperless-mcp:smoke \
+  -e "Promise.all(Array.from({length:30},()=>fetch('http://paperless-mcp:3000/readyz').then(r=>r.status))).then(s=>console.log([...new Set(s)]))"
+$SMOKE logs paperless-mcp | grep -c paperless_request_failed
+
+# 11. Tear down
+$SMOKE down
+```
+
+Steps 3, 9 and 10 are the ones worth keeping honest.
+
+Step 3 asserts on what remains in the image rather than enumerating what was
+deleted, because an earlier version of this file removed npm, npx and corepack,
+probed for exactly those three, and shipped Yarn 1 regardless. The image build
+makes the same assertion itself — a `command -v` sweep across `$PATH` plus an
+exact listing of the three Node tooling directories — so a base image that
+reintroduces a package manager fails the build rather than this step.
+
+Step 9's `sleep 11` is not padding. `/readyz` caches a successful verdict for
+ten seconds, so for the first ten seconds after the upstream stops it still
+answers `200` — correctly. Skipping the wait makes a working readiness check
+look broken.
+
+Step 10 is the amplification guard: the counter moves by exactly one across
+thirty concurrent unauthenticated requests.
+
 ## API Documentation
 
 This MCP server implements endpoints from the Paperless-NGX REST API. For more details about the underlying API, see the [official documentation](https://docs.paperless-ngx.com/api/).

@@ -39,6 +39,7 @@ import express, { Express, Request, Response } from "express";
 import type { HttpAuthConfig } from "../config/httpAuth";
 import { errorClass, log } from "../logging";
 import { bearerAuth } from "./auth";
+import { HealthOptions, registerHealthRoutes } from "./health";
 import { registerLegacySseRoutes } from "./legacySse";
 import {
   bodyLimitErrorHandler,
@@ -66,6 +67,8 @@ export interface McpHttpAppOptions {
   auth: HttpAuthConfig;
   security?: HttpSecurityConfig;
   limits?: HttpLimitsConfig;
+  /** Container/orchestrator probes. See `health.ts` for what they may say. */
+  health?: HealthOptions;
   /**
    * Legacy `GET /sse` + `POST /messages` routes. **Off unless explicitly
    * enabled**: they are the least-exercised surface here, the SDK deprecates
@@ -110,6 +113,11 @@ export function createMcpHttpApp(options: McpHttpAppOptions): Express {
   // Registered immediately after the parser it translates, so an oversized or
   // unparseable body gets the JSON-RPC shape rather than Express's HTML page.
   app.use(bodyLimitErrorHandler());
+  // Registered after every app-wide middleware, which is what keeps the
+  // container probes inside the Host/Origin and rate-limit boundaries. Only
+  // `bearerAuth` lets them through, and only by the explicit path exemption in
+  // `UNAUTHENTICATED_PATHS`.
+  registerHealthRoutes(app, options.health);
 
   app.post("/mcp", async (req: Request, res: Response) => {
     let server: McpServer | undefined;

@@ -1,6 +1,12 @@
 # Dependencies
 node_modules/
 
+# Secret files created when following compose.example.yaml. Named explicitly
+# rather than as `*.txt`, so an accidental rename does not silently stay
+# ignored.
+paperless_token.txt
+paperless_mcp_auth.txt
+
 # Environment variables
 .env
 .env.local
