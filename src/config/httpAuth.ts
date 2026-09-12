@@ -72,6 +72,12 @@ export const UNAUTHENTICATED_PATHS: readonly string[] = ["/healthz", "/readyz"];
  * handler. Nothing else: every other method on these paths now falls through
  * to authentication and is rejected *before* the parser runs.
  *
+ * The method is necessary but **not sufficient**. `express.json()` parses by
+ * `Content-Type`, not by method, so a `GET` carrying a JSON body reached the
+ * parser through this very exemption (+381 MiB RSS for 24 concurrent 9 MiB
+ * requests, scaling with the body limit). An exempt request must also carry
+ * no body — see `isPublicRequest` in `src/http/auth.ts`.
+ *
  * This also closes a small oracle. `POST /healthz` used to return 404 while
  * `POST /nonexistent` returned 401, which told an unauthenticated prober
  * which routes exist. Both are 401 now.
