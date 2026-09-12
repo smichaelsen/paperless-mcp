@@ -51,8 +51,9 @@ That's it! Now you can ask Claude to help you manage your Paperless-NGX document
 ## Configuration
 
 The URL and token can come from positional arguments (`paperless-mcp <baseUrl> <token>`)
-or from the environment. Environment variables are used when the matching argument is
-missing, and are the only option in `--http` mode.
+or from the environment. Environment variables are consulted only when the matching
+argument is missing — a positional token always wins, and `PAPERLESS_API_TOKEN_FILE`
+is not even read in that case. In `--http` mode the environment is the only source.
 
 | Variable | Purpose |
 | --- | --- |
@@ -470,12 +471,14 @@ npm run start -- <baseUrl> <token>
 
 To run the server as an HTTP service, use the `--http` flag. You can also specify the port with `--port` (default: 3000). This mode requires [Express](https://expressjs.com/) to be installed (it is included as a dependency).
 
+In `--http` mode the URL and token are read from the environment only — positional
+arguments are ignored. See [Configuration](#configuration).
+
 ```
-npm run start -- <baseUrl> <token> --http --port 3000
+PAPERLESS_URL=http://localhost:8000 PAPERLESS_API_TOKEN=<token> \
+  npm run start -- --http --port 3000
 ```
 
-- In `--http` mode the URL and token are read from the environment only — see
-  [Configuration](#configuration).
 - The MCP API will be available at `POST /mcp` on the specified port.
 - Each request is handled statelessly, following the [StreamableHTTPServerTransport](https://github.com/modelcontextprotocol/typescript-sdk) pattern.
 - GET and DELETE requests to `/mcp` will return 405 Method Not Allowed.
