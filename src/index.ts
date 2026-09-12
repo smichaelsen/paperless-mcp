@@ -7,10 +7,22 @@ import {
   TOKEN_ENV,
   TOKEN_FILE_ENV,
 } from "./config/credentials";
+import {
+  ALLOW_UNAUTHENTICATED_ENV,
+  describeAuth,
+  resolveHttpAuth,
+} from "./config/httpAuth";
 import { resolveToolAccess } from "./config/toolAccess";
 import { createMcpHttpApp } from "./http/app";
+import {
+  BIND_ADDRESS_ENV,
+  isLoopbackAddress,
+  resolveBindAddress,
+} from "./http/bind";
+import { resolveHttpLimits } from "./http/limits";
 import { installProcessErrorHandlers } from "./http/processErrors";
 import { describeAllowlist, resolveHttpSecurity } from "./http/security";
+import { ENABLE_LEGACY_SSE_ENV, legacySseEnabled } from "./http/legacyFlag";
 import { log, logFatal, registerSecret } from "./logging";
 import { registerAllTools } from "./mcp/registerTools";
 
@@ -100,13 +112,51 @@ async function main() {
 
   if (useHttp) {
     const security = resolveHttpSecurity(process.env);
-    const app = createMcpHttpApp({ createServer, security });
-    app.listen(port, () => {
+    const limits = resolveHttpLimits(process.env);
+    const bindAddress = resolveBindAddress(process.env);
+    // Throws a CredentialError — caught and logged by main().catch — when no
+    // secret is configured and the opt-out was not set. Deliberately fatal;
+    // see the reasoning on resolveHttpAuth.
+    const auth = resolveHttpAuth(process.env);
+    const enableLegacySse = legacySseEnabled(process.env);
+
+    // Unauthenticated *and* reachable from the network is the exact
+    // combination that made this listener a remote Paperless proxy. The
+    // escape hatch exists for local development; it does not extend to
+    // publishing the port.
+    if (auth.mode === "disabled" && !isLoopbackAddress(bindAddress)) {
+      logFatal(
+        new Error(
+          `Refusing to start: ${ALLOW_UNAUTHENTICATED_ENV} is set while ` +
+            `${BIND_ADDRESS_ENV} binds a non-loopback address. Configure an ` +
+            `authentication secret, or bind loopback only.`
+        )
+      );
+      process.exit(1);
+    }
+
+    const app = createMcpHttpApp({
+      createServer,
+      auth,
+      security,
+      limits,
+      enableLegacySse,
+    });
+    app.listen(port, bindAddress, () => {
       // stderr via log(): stdout is the MCP framing channel under stdio.
       log("info", "http_server_listening", {
+        address: bindAddress,
         port,
         transport: "streamable-http",
         session_mode: "stateless",
+        // The mode and the variable it came from, never the secret itself.
+        auth: describeAuth(auth),
+        legacy_sse: enableLegacySse ? ENABLE_LEGACY_SSE_ENV : "disabled",
+        max_body: limits.maxBody,
+        rate_limit:
+          limits.rateLimitMax > 0
+            ? `${limits.rateLimitMax}/${limits.rateLimitWindowMs}ms`
+            : "disabled",
         allowed_hosts: describeAllowlist(security.allowedHosts),
         allowed_origins: describeAllowlist(security.allowedOrigins),
       });

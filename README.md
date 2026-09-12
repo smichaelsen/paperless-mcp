@@ -22,6 +22,27 @@ An MCP (Model Context Protocol) server for interacting with a Paperless-NGX API 
 > one, set only `PAPERLESS_ALLOW_WRITES=true`. See
 > [Tool access modes](#tool-access-modes).
 
+> [!IMPORTANT]
+> **Breaking change — `--http` now authenticates, and binds loopback.**
+>
+> The HTTP listener used to bind every interface with no authentication, so
+> anyone who could reach the port could drive the full tool surface. Three
+> things changed:
+>
+> - it **refuses to start** without a bearer secret in
+>   `PAPERLESS_MCP_AUTH_TOKEN_FILE` (or `PAPERLESS_MCP_AUTH_TOKEN`), and every
+>   request must carry `Authorization: Bearer <secret>`;
+> - it binds **`127.0.0.1`** unless `PAPERLESS_MCP_BIND_ADDRESS` says otherwise
+>   — a container needs `PAPERLESS_MCP_BIND_ADDRESS=0.0.0.0` to be reachable
+>   from its network at all;
+> - the deprecated `GET /sse` + `POST /messages` routes are gone unless
+>   `PAPERLESS_MCP_ENABLE_LEGACY_SSE` is set.
+>
+> `PAPERLESS_MCP_ALLOW_UNAUTHENTICATED=true` restores the old open behaviour on
+> a loopback bind. See [Authentication](#authentication).
+>
+> `stdio` mode is unaffected.
+
 ## Supported versions
 
 | | Supported |
@@ -107,27 +128,53 @@ is not even read in that case. In `--http` mode the environment is the only sour
 | `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
 | `PAPERLESS_ALLOW_WRITES` | Register the write-class tools. Off by default — see [Tool access modes](#tool-access-modes). |
 | `PAPERLESS_ALLOW_DESTRUCTIVE` | Register the destructive-class tools. Off by default, and never implied by `PAPERLESS_ALLOW_WRITES`. |
+| `PAPERLESS_MCP_AUTH_TOKEN_FILE` | **`--http` only, required.** Path to a file containing the bearer secret clients must present. Takes precedence over `PAPERLESS_MCP_AUTH_TOKEN`. |
+| `PAPERLESS_MCP_AUTH_TOKEN` | `--http` only. The bearer secret inline. Prefer the `_FILE` form. |
+| `PAPERLESS_MCP_ALLOW_UNAUTHENTICATED` | `--http` only. Explicitly start **without** authentication. Refused unless the bind address is loopback. |
+| `PAPERLESS_MCP_BIND_ADDRESS` | `--http` only. Interface the listener binds to. Default `127.0.0.1` — loopback only. |
+| `PAPERLESS_MCP_ENABLE_LEGACY_SSE` | `--http` only. Register the deprecated `GET /sse` + `POST /messages` routes. Off by default. |
+| `PAPERLESS_MCP_MAX_BODY` | `--http` only. Largest accepted JSON body, e.g. `10mb` (the default) or `512kb`. |
+| `PAPERLESS_MCP_RATE_LIMIT_MAX` | `--http` only. Requests per window per client address. Default `600`; `0` disables rate limiting. |
+| `PAPERLESS_MCP_RATE_LIMIT_WINDOW_MS` | `--http` only. Length of the rate-limit window in milliseconds. Default `60000`. |
 | `PAPERLESS_MCP_ALLOWED_HOSTS` | `--http` only. Comma-separated hostnames accepted in the `Host` header (ports ignored). **Replaces** the default `localhost,127.0.0.1,[::1]` rather than extending it. `*` disables the check. |
 | `PAPERLESS_MCP_ALLOWED_ORIGINS` | `--http` only. Comma-separated origins accepted in the `Origin` header. Default: none — a request carrying *any* `Origin` is rejected, while requests without one (every non-browser MCP client) pass. `*` disables the check. |
 
-`PAPERLESS_API_TOKEN_FILE` is meant for Docker/Kubernetes secrets: the file is read once
-at startup, surrounding whitespace (including the trailing newline) is stripped, and an
-unreadable or empty file aborts startup with a clear message that never contains the
-token. A read-only mount is enough.
+`PAPERLESS_API_TOKEN_FILE` and `PAPERLESS_MCP_AUTH_TOKEN_FILE` are meant for
+Docker/Kubernetes secrets: the file is read once at startup, surrounding whitespace
+(including the trailing newline) is stripped, and an unreadable or empty file aborts
+startup with a clear message that never contains the secret. A read-only mount is
+enough. Neither secret can be passed on the command line — an argument is visible in
+`ps`, in shell history and in `docker inspect`.
 
 ```yaml
 services:
   paperless-mcp:
     image: paperless-mcp
+    # No `ports:` — nothing is published to the host. Other services on this
+    # network reach the server at http://paperless-mcp:3000/mcp; anything
+    # outside it goes through a reverse proxy that terminates TLS.
+    expose:
+      - "3000"
     environment:
       PAPERLESS_URL: https://paperless.example
       PAPERLESS_API_TOKEN_FILE: /run/secrets/paperless_token
+      PAPERLESS_MCP_AUTH_TOKEN_FILE: /run/secrets/paperless_mcp_auth
+      # Inside a container the listener has to bind the container's own
+      # interface to be reachable from the compose network at all. The network
+      # is the boundary here, and the bearer secret is the access control.
+      PAPERLESS_MCP_BIND_ADDRESS: 0.0.0.0
+      PAPERLESS_MCP_ALLOWED_HOSTS: paperless-mcp,localhost,127.0.0.1,[::1]
     secrets:
       - paperless_token
+      - paperless_mcp_auth
 secrets:
   paperless_token:
     file: ./paperless_token.txt
+  paperless_mcp_auth:
+    file: ./paperless_mcp_auth.txt
 ```
+
+Generate the bearer secret with something like `openssl rand -base64 32 > paperless_mcp_auth.txt`.
 
 ### Logging
 
@@ -719,14 +766,98 @@ To run the server as an HTTP service, use the `--http` flag. You can also specif
 In `--http` mode the URL and token are read from the environment only — positional
 arguments are ignored. See [Configuration](#configuration).
 
+`--http` **requires a bearer secret** and refuses to start without one:
+
 ```
-PAPERLESS_URL=http://localhost:8000 PAPERLESS_API_TOKEN=<token> \
+PAPERLESS_URL=http://localhost:8000 \
+PAPERLESS_API_TOKEN_FILE=/run/secrets/paperless_token \
+PAPERLESS_MCP_AUTH_TOKEN_FILE=/run/secrets/paperless_mcp_auth \
   npm run start -- --http --port 3000
 ```
 
 - The MCP API will be available at `POST /mcp` on the specified port.
+- The listener binds `127.0.0.1` — **loopback only** — unless `PAPERLESS_MCP_BIND_ADDRESS` says otherwise.
+- Every request must carry `Authorization: Bearer <secret>`.
 - Each request is handled statelessly, following the [StreamableHTTPServerTransport](https://github.com/modelcontextprotocol/typescript-sdk) pattern.
 - GET and DELETE requests to `/mcp` will return 405 Method Not Allowed.
+- The deprecated `GET /sse` + `POST /messages` routes are **not registered** unless `PAPERLESS_MCP_ENABLE_LEGACY_SSE` is set.
+
+#### Authentication
+
+The HTTP listener hands out the whole enabled tool surface — and it holds a Paperless
+API token — so it authenticates every MCP transport route with a shared bearer secret.
+
+```
+curl -s http://127.0.0.1:3000/mcp \
+  -H "Authorization: Bearer <SECRET>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0.0"}}}'
+```
+
+- The secret comes from `PAPERLESS_MCP_AUTH_TOKEN_FILE` (preferred) or
+  `PAPERLESS_MCP_AUTH_TOKEN`. There is no CLI flag on purpose.
+- A missing, malformed, wrong or duplicated credential all get the **same** `401` with
+  the same body and a `WWW-Authenticate: Bearer` header. Nothing distinguishes them —
+  telling "malformed" from "wrong" would tell a prober which half of its guess to fix.
+- The comparison is constant time (`crypto.timingSafeEqual` over SHA-256 digests, so a
+  length mismatch neither throws nor leaks the secret's length).
+- The secret is registered with the log redactor. It — and the `Authorization` header —
+  never appear in a log line.
+- Rate limiting runs **before** authentication, so the secret cannot be guessed at line
+  rate.
+
+> [!IMPORTANT]
+> `--http` exits with a message rather than starting unauthenticated. If you genuinely
+> want an open listener — local development, nothing else on the machine — set
+> `PAPERLESS_MCP_ALLOW_UNAUTHENTICATED=true`. It is refused in combination with a
+> non-loopback `PAPERLESS_MCP_BIND_ADDRESS`.
+
+#### Network exposure and TLS
+
+The listener binds `127.0.0.1` by default: nothing outside this host can reach it, and
+the documented Compose deployment publishes no host port at all. Reaching it from
+elsewhere is an explicit opt-in:
+
+```
+PAPERLESS_MCP_BIND_ADDRESS=0.0.0.0
+```
+
+which logs a `http_bind_not_loopback` warning at startup, because from that moment the
+port is only as private as the network around it.
+
+**This server speaks plain HTTP and does not terminate TLS.** Anything beyond loopback —
+and certainly anything beyond a trusted private network — must go through a reverse
+proxy (nginx, Caddy, Traefik) or a tunnel (Cloudflare Tunnel, Tailscale) that terminates
+TLS and forwards to the listener. Without that, the bearer secret crosses the wire in
+clear text on every request.
+
+If the proxy reaches the server under a name other than a loopback one, add it to
+`PAPERLESS_MCP_ALLOWED_HOSTS` — see below.
+
+#### Rate and body-size limits
+
+| | Default | Variable |
+| --- | --- | --- |
+| Max JSON body | `10mb` | `PAPERLESS_MCP_MAX_BODY` |
+| Requests per window | `600` | `PAPERLESS_MCP_RATE_LIMIT_MAX` (`0` disables) |
+| Window | `60000` ms | `PAPERLESS_MCP_RATE_LIMIT_WINDOW_MS` |
+
+The body limit is deliberately generous: `post_document` carries the uploaded file
+**base64-encoded inside the JSON-RPC body**, so Express's own 100 kB default capped
+every upload at roughly 74 kB of actual file. `10mb` is about 7.5 MB of file. A
+read-only deployment — the default access mode — never needs more than a few kilobytes
+and can turn it right down.
+
+Over-limit bodies get `413`, unparseable ones `400`, and too many requests `429` with a
+`Retry-After` header — all as JSON-RPC error objects rather than Express's HTML error
+page.
+
+Rate limiting keys on the client's TCP source address. `X-Forwarded-For` is deliberately
+**not** honoured: it is a plain request header, so trusting it would let any caller pick
+its own bucket. Behind a reverse proxy every request therefore shares the proxy's
+address and the limit is effectively global — still a useful flood ceiling, but size it
+for the whole deployment rather than per client.
 
 #### Client isolation
 
@@ -743,12 +874,13 @@ are validated before a request reaches a transport. By default only loopback *ho
 are accepted and every browser origin is rejected; see `PAPERLESS_MCP_ALLOWED_HOSTS` and
 `PAPERLESS_MCP_ALLOWED_ORIGINS` under [Configuration](#configuration).
 
-> [!WARNING]
-> This is a header check, **not** an access control and **not** a network restriction.
-> The server currently listens on all interfaces and has no authentication, so anyone
-> who can reach the port can use the full Paperless tool surface by sending
-> `Host: localhost`. Bind the port to loopback yourself (or keep it behind a firewall)
-> until private binding lands. What the check does stop is the DNS-rebinding case: a
+> [!NOTE]
+> This is a header check, **not** an access control and **not** a network restriction —
+> the `Host` header is written by the caller. It used to be the only thing standing
+> between the network and the tool surface, and it was not enough: the listener bound
+> all interfaces, so another host on the LAN sending `Host: localhost` got a `200` with
+> full `serverInfo`. That is closed now by the loopback default bind and by bearer
+> authentication. What this check contributes is the DNS-rebinding case specifically: a
 > browser cannot be tricked into driving the server from a page on another origin.
 
 If you reach the server under any other name — a Docker service name, a reverse proxy —
@@ -762,5 +894,5 @@ PAPERLESS_MCP_ALLOWED_HOSTS=localhost,127.0.0.1,[::1],paperless-mcp
 The allowlists in effect are printed at startup:
 
 ```json
-{"level":"info","event":"http_server_listening","port":3000,"transport":"streamable-http","session_mode":"stateless","allowed_hosts":"localhost,127.0.0.1,[::1]","allowed_origins":"(none)"}
+{"level":"info","event":"http_server_listening","address":"127.0.0.1","port":3000,"transport":"streamable-http","session_mode":"stateless","auth":"bearer (PAPERLESS_MCP_AUTH_TOKEN_FILE)","legacy_sse":"disabled","max_body":"10mb","rate_limit":"600/60000ms","allowed_hosts":"localhost,127.0.0.1,[::1]","allowed_origins":"(none)"}
 ```

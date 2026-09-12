@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createMcpHttpApp } from "../../src/http/app";
 import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
-import { connectClient, createBarrier, RunningApp, startApp } from "./harness";
+import { connectClient, createBarrier, NO_AUTH, RunningApp, startApp } from "./harness";
 
 const SECURITY = {
   allowedHosts: DEFAULT_ALLOWED_HOSTS,
@@ -103,7 +103,7 @@ afterEach(async () => {
 
 async function twoClients(factory: Factory): Promise<[Client, Client]> {
   running = await startApp(
-    createMcpHttpApp({ createServer: factory.createServer, security: SECURITY })
+    createMcpHttpApp({ auth: NO_AUTH, createServer: factory.createServer, security: SECURITY })
   );
   const [a, b] = await Promise.all([
     connectClient(running.url, "client-a"),
@@ -197,6 +197,7 @@ describe("concurrent Streamable HTTP clients", () => {
     const factory = testServerFactory();
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: factory.createServer,
         security: SECURITY,
       })
@@ -229,6 +230,7 @@ describe("concurrent Streamable HTTP clients", () => {
     const factory = testServerFactory();
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: factory.createServer,
         security: SECURITY,
       })

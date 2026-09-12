@@ -25,12 +25,27 @@
  * request ("Stateless transport cannot be reused across requests") — hence a
  * fresh transport *and* a fresh server per request, and `GET`/`DELETE /mcp`
  * (resumption and session teardown) stay 405.
+ *
+ * ## Every route is authenticated
+ *
+ * `bearerAuth` is applied app-wide rather than per route, so a route added
+ * later is protected by default rather than by remembering to protect it. The
+ * only exemptions are the container probe paths in
+ * `UNAUTHENTICATED_PATHS` (issue #10), which nothing here serves yet.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { Express, Request, Response } from "express";
+import type { HttpAuthConfig } from "../config/httpAuth";
 import { errorClass, log } from "../logging";
+import { bearerAuth } from "./auth";
 import { registerLegacySseRoutes } from "./legacySse";
+import {
+  bodyLimitErrorHandler,
+  HttpLimitsConfig,
+  rateLimit,
+  resolveHttpLimits,
+} from "./limits";
 import {
   dnsRebindingProtection,
   HttpSecurityConfig,
@@ -42,10 +57,20 @@ export type McpServerFactory = () => McpServer;
 
 export interface McpHttpAppOptions {
   createServer: McpServerFactory;
-  security?: HttpSecurityConfig;
   /**
-   * Legacy `GET /sse` + `POST /messages` routes (issue #11 will gate or remove
-   * them). They are registered last and in one call, so gating is a one-liner.
+   * Required, not optional-with-a-default: an app built without a deliberate
+   * decision about authentication would be an unauthenticated app, and the
+   * one place allowed to decide "disabled" is `resolveHttpAuth`, which makes
+   * the operator say so explicitly.
+   */
+  auth: HttpAuthConfig;
+  security?: HttpSecurityConfig;
+  limits?: HttpLimitsConfig;
+  /**
+   * Legacy `GET /sse` + `POST /messages` routes. **Off unless explicitly
+   * enabled**: they are the least-exercised surface here, the SDK deprecates
+   * them in favour of Streamable HTTP, and their session table is the only
+   * cross-request state this server would otherwise hold.
    */
   enableLegacySse?: boolean;
 }
@@ -62,11 +87,29 @@ function methodNotAllowed(_req: Request, res: Response): void {
 export function createMcpHttpApp(options: McpHttpAppOptions): Express {
   const { createServer } = options;
   const security = options.security ?? resolveHttpSecurity(process.env);
+  const limits = options.limits ?? resolveHttpLimits(process.env);
 
   const app = express();
-  // Ordering matters: reject before any body is handed to a transport.
+  // Express's `X-Powered-By` announces the stack to anyone probing the port.
+  app.disable("x-powered-by");
+  // Ordering is the security-relevant part of this function:
+  //
+  // 1. Host/Origin — the cheapest check, and the one that stops a browser page
+  //    from reaching any of the following at all.
+  // 2. Rate limit — before authentication, so the bearer secret cannot be
+  //    guessed at line rate.
+  // 3. Authentication — before the body parser, so an unauthenticated caller
+  //    can never make this process buffer and parse a 10 MB body.
+  // 4. Body parsing, and only then a transport.
   app.use(dnsRebindingProtection(security));
-  app.use(express.json());
+  app.use(
+    rateLimit({ max: limits.rateLimitMax, windowMs: limits.rateLimitWindowMs })
+  );
+  app.use(bearerAuth(options.auth));
+  app.use(express.json({ limit: limits.maxBody }));
+  // Registered immediately after the parser it translates, so an oversized or
+  // unparseable body gets the JSON-RPC shape rather than Express's HTML page.
+  app.use(bodyLimitErrorHandler());
 
   app.post("/mcp", async (req: Request, res: Response) => {
     let server: McpServer | undefined;
@@ -111,7 +154,7 @@ export function createMcpHttpApp(options: McpHttpAppOptions): Express {
   app.get("/mcp", methodNotAllowed);
   app.delete("/mcp", methodNotAllowed);
 
-  if (options.enableLegacySse !== false) {
+  if (options.enableLegacySse === true) {
     registerLegacySseRoutes(app, { createServer });
   }
 

@@ -13,7 +13,7 @@ import { toolAccessMode } from "../../src/config/toolAccess";
 import { createMcpHttpApp } from "../../src/http/app";
 import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
 import { registerAllTools } from "../../src/mcp/registerTools";
-import { connectClient, createBarrier, RunningApp, startApp } from "./harness";
+import { connectClient, createBarrier, NO_AUTH, RunningApp, startApp } from "./harness";
 
 const PAPERLESS_URL = "https://paperless.example.invalid";
 const SECURITY = {
@@ -73,6 +73,7 @@ describe("concurrent clients on the real tool surface", () => {
     const api = new PaperlessAPI(PAPERLESS_URL, "s3cr3t-token-value");
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: () => {
           const server = new McpServer({
             name: "paperless-ngx",
@@ -136,7 +137,7 @@ describe("concurrent clients on the real tool surface", () => {
         .sort();
 
       running = await startApp(
-        createMcpHttpApp({ createServer: build, security: SECURITY })
+        createMcpHttpApp({ auth: NO_AUTH, createServer: build, security: SECURITY })
       );
       const client = await connectClient(running.url, "client-a");
       clients.push(client);

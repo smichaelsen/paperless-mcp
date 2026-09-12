@@ -15,7 +15,7 @@ import {
   hostnameOf,
   resolveHttpSecurity,
 } from "../../src/http/security";
-import { initializeBody, rawRequest, RunningApp, startApp } from "./harness";
+import { initializeBody, NO_AUTH, rawRequest, RunningApp, startApp } from "./harness";
 
 describe("resolveHttpSecurity", () => {
   it("defaults to loopback hosts and no browser origin", () => {
@@ -80,12 +80,17 @@ describe("dnsRebindingProtection over HTTP", () => {
     vi.restoreAllMocks();
   });
 
-  async function serve(env: Record<string, string | undefined> = {}) {
+  async function serve(
+    env: Record<string, string | undefined> = {},
+    enableLegacySse = false
+  ) {
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: () =>
           new McpServer({ name: "security-test", version: "1.0.0" }),
         security: resolveHttpSecurity(env),
+        enableLegacySse,
       })
     );
     return running;
@@ -187,7 +192,7 @@ describe("dnsRebindingProtection over HTTP", () => {
   });
 
   it("protects the legacy SSE routes too", async () => {
-    const app = await serve();
+    const app = await serve({}, true);
     const sse = await rawRequest({
       port: app.port,
       path: "/sse",

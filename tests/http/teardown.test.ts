@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createMcpHttpApp } from "../../src/http/app";
 import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
-import { connectClient, rawRequest, RunningApp, startApp } from "./harness";
+import { connectClient, NO_AUTH, rawRequest, RunningApp, startApp } from "./harness";
 
 const SECURITY = {
   allowedHosts: DEFAULT_ALLOWED_HOSTS,
@@ -144,6 +144,7 @@ describe("per-request teardown on /mcp", () => {
     const factory = trackingFactory({});
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: factory.createServer,
         security: SECURITY,
       })
@@ -179,6 +180,7 @@ describe("per-request teardown on /mcp", () => {
     });
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: factory.createServer,
         security: SECURITY,
       })
@@ -222,8 +224,10 @@ describe("per-stream teardown on the legacy SSE route", () => {
     const factory = trackingFactory({});
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: factory.createServer,
         security: SECURITY,
+        enableLegacySse: true,
       })
     );
 

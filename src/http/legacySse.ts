@@ -1,6 +1,12 @@
 /**
  * Legacy HTTP+SSE transport (`GET /sse` + `POST /messages`), superseded by
- * Streamable HTTP. Kept for older clients; issue #11 will gate or remove it.
+ * Streamable HTTP and deprecated by the SDK.
+ *
+ * **Not registered unless `PAPERLESS_MCP_ENABLE_LEGACY_SSE` is set** (issue
+ * #11). They stay in the tree rather than being deleted because a client that
+ * predates Streamable HTTP still has no other way in, but off is the default:
+ * this is the least-exercised surface here, and its session map is the only
+ * cross-request state the server would otherwise keep.
  *
  * Everything lives behind one `registerLegacySseRoutes(app, ...)` call so the
  * gate is a single `if`. The isolation rule is the same as for `/mcp`: one
