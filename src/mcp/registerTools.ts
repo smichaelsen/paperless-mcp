@@ -21,18 +21,22 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaperlessAPI } from "../api/PaperlessAPI";
+import type { ToolAccessMode } from "../config/toolAccess";
+import { resolveToolAccess } from "../config/toolAccess";
+import { log } from "../logging";
 import { registerCorrespondentTools } from "../tools/correspondents";
 import { registerDocumentTools } from "../tools/documents";
 import { registerDocumentTypeTools } from "../tools/documentTypes";
 import { registerTagTools } from "../tools/tags";
+import type { ToolShape } from "./toolPolicy";
+import { gateRegistration, policyFor } from "./toolPolicy";
+
+export type { ToolShape };
 
 /** The JSON-Schema keyword this module restores. */
 const CLOSED_OBJECT = { additionalProperties: false } as const;
 
 type AnyZodType = z.ZodType<any, any, any>;
-
-/** A tool's declared arguments: field name -> zod schema. */
-export type ToolShape = Record<string, AnyZodType>;
 
 /** Merge metadata into a schema's global registry entry, keeping `.describe()`. */
 function markClosed(schema: AnyZodType): void {
@@ -114,26 +118,71 @@ export interface ToolRegistrar {
  * registers through `registerTool` with a closed object schema. The deprecated
  * `tool()` overload only accepts a raw shape, which is exactly the path that
  * loses the keyword.
+ *
+ * The same adapter applies the access policy (`./toolPolicy`): a tool the
+ * active mode does not allow is never handed to `registerTool`, so it is absent
+ * from `tools/list` rather than advertised and refusing. `registered` counts
+ * what survived, for the startup log line.
  */
-export function closedSchemaRegistrar(server: McpServer): ToolRegistrar {
+export function closedSchemaRegistrar(
+  server: McpServer,
+  mode: ToolAccessMode,
+  registered: string[] = []
+): ToolRegistrar {
   return {
     tool(name, description, shape, handler) {
+      // Throws for a tool with no policy entry: an unclassified tool must not
+      // fall through into the read-only surface.
+      const annotations = policyFor(name).annotations;
+      const gated = gateRegistration(
+        { name, description, shape, handler },
+        mode
+      );
+      if (!gated) return;
+
+      registered.push(name);
       server.registerTool(
         name,
-        { description, inputSchema: closedObjectFromShape(shape) },
-        handler as never
+        {
+          description: gated.description,
+          inputSchema: closedObjectFromShape(gated.shape),
+          annotations,
+        },
+        gated.handler as never
       );
     },
   };
 }
 
-/** Register the whole Paperless tool surface on `server`. */
-export function registerAllTools(server: McpServer, api: PaperlessAPI): void {
+/**
+ * Register the Paperless tool surface `mode` allows on `server`.
+ *
+ * `mode` defaults to the process configuration — the environment variables and
+ * CLI flags documented in `src/config/toolAccess.ts` — which is why the call in
+ * `src/index.ts` needs no arguments. Tests pass a mode explicitly.
+ */
+export function registerAllTools(
+  server: McpServer,
+  api: PaperlessAPI,
+  mode: ToolAccessMode = resolveToolAccess()
+): void {
+  const registered: string[] = [];
   // The tool modules only ever call `server.tool(...)`; one of them declares
   // its parameter as `McpServer`, so the adapter is cast to satisfy it.
-  const registrar = closedSchemaRegistrar(server) as unknown as McpServer;
+  const registrar = closedSchemaRegistrar(
+    server,
+    mode,
+    registered
+  ) as unknown as McpServer;
   registerDocumentTools(registrar, api);
   registerTagTools(registrar, api);
   registerCorrespondentTools(registrar, api);
   registerDocumentTypeTools(registrar, api);
+
+  log("info", "tool_access_mode", {
+    mode: mode.label,
+    writes: mode.writes,
+    destructive: mode.destructive,
+    tools: registered.length,
+  });
 }
