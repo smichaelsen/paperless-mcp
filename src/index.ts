@@ -11,10 +11,7 @@ import {
   TOKEN_FILE_ENV,
 } from "./config/credentials";
 import { logFatal, registerSecret } from "./logging";
-import { registerCorrespondentTools } from "./tools/correspondents";
-import { registerDocumentTools } from "./tools/documents";
-import { registerDocumentTypeTools } from "./tools/documentTypes";
-import { registerTagTools } from "./tools/tags";
+import { registerAllTools } from "./mcp/registerTools";
 
 // Simple CLI argument parsing
 const args = process.argv.slice(2);
@@ -62,10 +59,7 @@ async function main() {
   // Initialize API client and server once
   const api = new PaperlessAPI(baseUrl, token);
   const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
-  registerDocumentTools(server, api);
-  registerTagTools(server, api);
-  registerCorrespondentTools(server, api);
-  registerDocumentTypeTools(server, api);
+  registerAllTools(server, api);
 
   if (useHttp) {
     const app = express();

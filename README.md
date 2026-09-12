@@ -2,6 +2,30 @@
 
 An MCP (Model Context Protocol) server for interacting with a Paperless-NGX API server. This server provides tools for managing documents, tags, correspondents, and document types in your Paperless-NGX instance.
 
+## Supported versions
+
+| | Supported |
+| --- | --- |
+| Paperless-ngx | **2.16.0 – 3.1.x** (verified against 3.1.3) |
+| Paperless-ngx REST API | version **9** |
+| Node.js | 22 LTS and 24 LTS |
+
+The client asks Paperless-ngx for a specific REST API version with an
+`Accept: application/json; version=9` header. API version 9 was introduced in
+Paperless-ngx 2.16.0 and is still accepted by the current 3.1.x releases, which
+allow versions 9 and 10. Older instances (≤ 2.15.x) do not know version 9.
+
+If the instance does not accept the requested version it answers
+`406 Not Acceptable`; the server turns that into an explicit error naming the
+API version the instance offers (from its `X-Api-Version` header) and what to
+upgrade. The upstream response body is never read, logged, or forwarded into a
+tool result.
+
+Paperless-ngx documents its versioning scheme and per-version changelog under
+[REST API → API Versioning](https://docs.paperless-ngx.com/api/). Older API
+versions are supported by Paperless-ngx for at least one year after a newer one
+is released.
+
 ## Quick Start
 
 ### Installation
@@ -109,19 +133,9 @@ Here are some things you can ask Claude to do:
 
 ### Document Operations
 
-#### list_documents
-Get a paginated list of all documents.
-
-Parameters:
-- page (optional): Page number
-- page_size (optional): Number of documents per page
-
-```typescript
-list_documents({
-  page: 1,
-  page_size: 25
-})
-```
+> There is no `list_documents` tool. Use `search_documents` (below) to enumerate
+> documents; it takes the same `page`/`page_size` arguments and omits the OCR
+> content from each result.
 
 #### get_document
 Get a specific document by ID.
@@ -430,6 +444,10 @@ The server will show clear error messages if:
 - The Paperless-NGX server is unreachable
 - The requested operation fails
 - The provided parameters are invalid
+- The instance does not support the REST API version this client requests
+  (see [Supported versions](#supported-versions)) — the error names the API
+  version the instance offers and what to upgrade, without echoing the
+  upstream response
 
 ## Development
 
@@ -441,15 +459,65 @@ Want to contribute or modify the server? Here's what you need to know:
 npm install
 ```
 
-3. Make your changes to server.js
-4. Test locally:
+3. Make your changes under `src/`
+4. Run the quality gate (see [Testing](#testing))
+5. Try the server locally:
 ```bash
-node server.js http://localhost:8000 your-test-token
+npm run start -- http://localhost:8000 your-test-token
 ```
 
 The server is built with:
-- [litemcp](https://github.com/wong2/litemcp): A TypeScript framework for building MCP servers
+- [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk): the official MCP TypeScript SDK
 - [zod](https://github.com/colinhacks/zod): TypeScript-first schema validation
+
+## Testing
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # vitest, unit tests only, no network
+npm run build       # tsc -> build/index.js (the published bin)
+npm run audit:prod  # npm audit --omit=dev --audit-level=high
+```
+
+The same four steps run in CI (`.github/workflows/ci.yml`) on every pull
+request and on pushes to `main`, on Node.js 22 and 24.
+
+Unit tests mock `fetch`; the default test run never talks to a Paperless
+instance. They cover pagination query building, zod argument validation, MCP
+result conversion, upload form-data assembly, download handling, HTTP error
+mapping, API version negotiation, and a full `McpServer` ↔ `Client` round trip
+over an in-memory transport.
+
+### Integration tests
+
+The integration tests in `tests/integration/` run against a real Paperless-ngx
+instance. They are **opt-in**: without `PAPERLESS_TEST_URL` they skip
+themselves, so they are not part of the CI quality gate.
+
+Point them at a **disposable** instance (a throwaway container, not your
+production archive), even though they only ever create their own fixtures:
+
+```bash
+PAPERLESS_TEST_URL=http://localhost:8000 \
+PAPERLESS_TEST_TOKEN=<API_TOKEN> \
+npm run test:integration
+```
+
+| Variable | Meaning |
+| --- | --- |
+| `PAPERLESS_TEST_URL` | Base URL of the test instance. Unset ⇒ all integration tests skip. |
+| `PAPERLESS_TEST_TOKEN` | API token for that instance. Required when the URL is set. |
+| `PAPERLESS_TEST_UPLOAD` | Set to `1` to also run the document upload/consume test. Needs a running consumer and takes up to two minutes. |
+
+What they do:
+
+- verify that the instance offers API version 9 or newer, and that requesting
+  an unsupported version fails with our actionable error and no upstream data
+- exercise the read-only workflow: list documents/tags/correspondents/document
+  types with pagination, search, and fetch single objects
+- create, read, update and delete synthetic fixtures only — every object is
+  named `mcp-it-<random>-…` and is removed again in the cleanup hook, including
+  on failure. Pre-existing objects are never modified.
 
 ## API Documentation
 
