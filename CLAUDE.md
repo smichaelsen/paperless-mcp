@@ -17,6 +17,9 @@ published as `@smichaelsen/paperless-mcp`. No upstream PRs.
 - `tsconfig.json` must keep `"include": ["src/**/*.ts"]`. Widening it moves the
   compiled entrypoint off `build/index.js` and breaks the `paperless-mcp` bin.
 - Tests live in `tests/`, never in `src/` — `src/` is compiled into the shipped package.
+- `files` in `package.json` must keep `NOTICE`. npm auto-includes only
+  `package.json`, `README` and `LICENSE`; drop `NOTICE` from `files` and the
+  package ships with none of the upstream ISC attribution it is there to carry.
 - Integration tests that need a real Paperless instance must skip themselves when
   `PAPERLESS_TEST_URL` is unset.
 - Never log tokens, authorization headers, request bodies, or raw Paperless responses.

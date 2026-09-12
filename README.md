@@ -72,17 +72,22 @@ is released.
 ### Installation
 
 > [!IMPORTANT]
-> **Not on npm yet.** The package name is `@smichaelsen/paperless-mcp`, and the
-> first release has not been cut, so `npm install` of it fails with `E404` until
-> it has. Until then, install from the repository — see
-> [From a Git checkout](#from-a-git-checkout) below, or use the
-> [container image](#container-deployment). The commands in this section are
-> the ones that work once the package is published; see
-> [RELEASING.md](RELEASING.md) for what publishing involves.
+> **Check that the package is on npm before you install it:**
 >
-> The unscoped name `paperless-mcp`, which earlier versions of this README told
-> you to install, is upstream's package. It was unpublished on 2024-12-28 and
-> has returned `404` ever since. It is not this project and never was.
+> ```bash
+> npm view @smichaelsen/paperless-mcp version
+> ```
+>
+> An `E404` means no release has been cut yet and `npm install` cannot work; use
+> [From a Git checkout](#from-a-git-checkout) or the
+> [container image](#container-deployment) instead. A version number means you
+> are good to go. (No release existed when this section was written — see
+> [RELEASING.md](RELEASING.md) for what cutting one involves.)
+>
+> Do not fall back to the unscoped name `paperless-mcp`, which earlier versions
+> of this README told you to install: that is *upstream's* package, unpublished
+> on 2024-12-28 and returning `404` ever since. It is not this project and never
+> was.
 
 1. Install the MCP server:
 ```bash
@@ -1210,16 +1215,22 @@ The allowlists in effect are printed at startup:
 This project is released under the [MIT License](LICENSE).
 
 It is a hard fork of [`nloui/paperless-mcp`](https://github.com/nloui/paperless-mcp),
-and parts of the tree are still derived from that work — most of
-`src/api/PaperlessAPI.ts` and of the document, tag, correspondent and
-document-type tool modules. Upstream ships no LICENSE file; its `package.json`
-declares `"license": "ISC"` and `"author": "Nick Loui"`, and has since its first
-commit. The [LICENSE](LICENSE) file in this repository applies MIT to the
-project as a whole and reproduces the ISC terms and the upstream copyright
-attribution alongside it, which is the conventional way to redistribute
-permissively licensed code you did not write. Read it before relying on the
-licensing of this project — including the part explaining which pieces of that
-notice had to be reconstructed, because upstream never published one.
+and parts of the tree are still derived from that work: 530 of the 3606 lines
+under `src/` (15%), concentrated in `src/api/PaperlessAPI.ts` and the document,
+tag, correspondent and document-type tool modules. Upstream ships no LICENSE
+file anywhere — not in the repository, not in its npm tarball; its
+`package.json` declares `"license": "ISC"` and `"author": "Nick Loui"`, and has
+since its first commit.
+
+[**NOTICE**](NOTICE) carries that attribution: which files are affected and by
+how much, the ISC terms the upstream portions come under, and — read this part
+before relying on it — exactly which pieces of that notice had to be
+reconstructed, because upstream never published one to quote. `NOTICE` is
+listed in `files` in `package.json`, so it ships inside the npm package too.
+Keeping it out of [LICENSE](LICENSE) is deliberate: a permissive fork states
+its own grant in `LICENSE` and the inherited one alongside it, so that nothing
+reads as though upstream licensed its work under MIT, and so that the MIT text
+stays machine-detectable.
 
 There are no upstream pull requests and no attempt to stay mergeable with
 upstream; the two trees have diverged substantially.

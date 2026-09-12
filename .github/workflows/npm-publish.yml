@@ -1,5 +1,6 @@
 # Publishes @smichaelsen/paperless-mcp to the public npm registry when a GitHub
-# release is created. Nothing else triggers it: no push, no tag on its own.
+# release is published. Nothing else triggers it: no push, no tag on its own,
+# no draft.
 #
 # See RELEASING.md for the human side of the process, including the one secret
 # this workflow needs (NPM_TOKEN).
@@ -8,7 +9,16 @@ name: Publish to npm
 
 on:
   release:
-    types: [created]
+    # `published`, not `created`. A release saved as a draft first — the normal
+    # flow, and what the GitHub UI does by default — never produces a `created`
+    # workflow run: "Workflows are not triggered for the created, edited, or
+    # deleted activity types for draft releases", and `created` itself only
+    # means "a draft was saved, or a release or pre-release was published
+    # without previously being saved as a draft". Draft, then publish, would
+    # therefore have fired nothing at all: no run, no failure, no signal.
+    # `published` covers both the draft-then-publish and publish-directly
+    # paths.
+    types: [published]
 
 permissions:
   contents: read
@@ -76,6 +86,18 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      - name: Check the publish credential is present
+        # Fail in seconds rather than after the full build, with a sentence
+        # instead of npm's ENEEDAUTH. See RELEASING.md § One-time setup.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "The NPM_TOKEN repository secret is not set, so npm publish cannot authenticate." >&2
+            echo "Add an npm automation token as NPM_TOKEN, then re-run this workflow." >&2
+            exit 1
+          fi
+
       - run: npm ci
 
       - name: Check the release tag matches the package version
@@ -100,8 +122,13 @@ jobs:
         # --provenance: publishes a signed build-provenance attestation, so
         #   consumers can verify the tarball came from this workflow run.
         #   Requires the id-token permission above and a public repository.
+        # --tag: a GitHub pre-release must not land on npm's `latest`, which is
+        #   what a plain `npm publish` would do and what every `npm install`
+        #   without a version would then pick up. Marking the release as a
+        #   pre-release in the GitHub UI is enough to route it to `next`.
         # npm publish runs prepublishOnly -> npm run build, so the tarball is
         # built from this checkout rather than from anything cached.
-        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_DIST_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
+        run: npm publish --access public --provenance --tag "$NPM_DIST_TAG"

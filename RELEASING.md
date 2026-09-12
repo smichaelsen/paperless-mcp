@@ -2,8 +2,15 @@
 
 `@smichaelsen/paperless-mcp` is published to the public npm registry by
 `.github/workflows/npm-publish.yml`, which runs **only** when a GitHub release is
-created. Pushing a tag on its own publishes nothing; neither does a push to
-`main`. Creating a release is the single deliberate act that publishes.
+**published**. Pushing a tag on its own publishes nothing; neither does a push to
+`main`; neither does saving a release as a draft. Publishing the release is the
+single deliberate act that publishes the package.
+
+> The workflow listens for `release: [published]` rather than `[created]` on
+> purpose. `created` does not fire when a release that was saved as a draft is
+> later published — the normal flow, and the GitHub UI's default — so a
+> `created` trigger would have produced no run at all, and no failure either.
+> `published` fires on both paths.
 
 ## One-time setup
 
@@ -41,17 +48,37 @@ before cutting one — the workflow cannot do it for you.
    leading `v`. The workflow compares the two and fails the publish if they
    disagree, so a mismatch costs you a red run rather than a wrong version on
    npm. `gh release create` creates the tag if it does not exist yet.
+
+   If you draft the release in the UI instead, nothing happens until you press
+   **Publish release** — that is the event the workflow waits for. Add
+   `--prerelease` (or tick the box) for a release candidate: the workflow then
+   publishes it under the npm dist-tag `next` instead of `latest`, so a plain
+   `npm install` keeps resolving to the last stable version.
 4. Watch the run: `gh run watch --repo smichaelsen/paperless-mcp`. It
    type-checks, runs the unit tests, builds, verifies the bin shebang survived
    the build and audits production dependencies — on Node 22 and 24 — before it
    publishes anything.
 5. Verify: `npm view @smichaelsen/paperless-mcp version`.
+6. **After the first release only:** the Installation section of `README.md`
+   opens with an admonition telling the reader to check whether the package
+   exists on npm at all, because at the time of writing it did not. Once
+   step 5 answers with a version, that check is noise — delete the admonition
+   and leave the install commands. Nothing else in the README depends on the
+   package being unpublished.
 
 ## What gets published
 
-`files` in `package.json` is `["build"]`, so the tarball is the compiled
-JavaScript plus `package.json`, `README.md` and `LICENSE` (npm always includes
-those three). `src/`, `tests/`, the Dockerfile and the Compose examples stay out.
+`files` in `package.json` is `["build", "NOTICE"]`, so the tarball is the
+compiled JavaScript, the upstream attribution, and `package.json`, `README.md`
+and `LICENSE` — those three npm always includes, whatever `files` says. `src/`,
+`tests/`, the Dockerfile and the Compose examples stay out.
+
+**`NOTICE` has to be listed explicitly.** npm's always-included set is
+`package.json`, `README` and `LICENSE` and nothing else — a `NOTICE` or
+`THIRD-PARTY-NOTICES.md` is dropped unless `files` names it. Removing it from
+`files` would ship an MIT-licensed package carrying none of the upstream ISC
+attribution that `NOTICE` exists to carry. If you ever touch that field, run
+`npm pack --dry-run` and confirm `NOTICE` is still in the listing.
 
 Inspect it before releasing, without publishing anything:
 
