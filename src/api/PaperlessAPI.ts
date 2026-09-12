@@ -1,9 +1,16 @@
 import {
   errorClass,
+  log,
   logRequestFailure,
   normalizeEndpoint,
   registerSecret,
 } from "../logging";
+import {
+  REQUESTED_API_VERSION,
+  buildApiVersionError,
+  isApiVersionRejection,
+  requestsApiVersion,
+} from "./apiVersion";
 
 /**
  * Read and discard a response body. Failed responses must still be drained so
@@ -60,15 +67,34 @@ export class PaperlessAPI {
     }
 
     if (!response.ok) {
+      // A 406 on a request that negotiated an API version means the instance
+      // refused that version. Only the two version response headers are used —
+      // the body is drained unread, as for any other failure.
+      const versionError =
+        isApiVersionRejection(response.status) && requestsApiVersion(init)
+          ? buildApiVersionError(response.headers)
+          : undefined;
+
       logRequestFailure({
         method,
         endpoint,
         status: response.status,
         durationMs: Date.now() - startedAt,
-        errorClass: "HttpStatusError",
+        errorClass: versionError
+          ? "PaperlessApiVersionError"
+          : "HttpStatusError",
       });
+      if (versionError) {
+        log("error", "paperless_api_version_unsupported", {
+          method,
+          endpoint,
+          requested_api_version: REQUESTED_API_VERSION,
+          server_api_version: versionError.serverApiVersion,
+          server_version: versionError.serverVersion,
+        });
+      }
       await discardBody(response);
-      throw new Error(`HTTP error! status: ${response.status}`);
+      throw versionError ?? new Error(`HTTP error! status: ${response.status}`);
     }
 
     return response;
@@ -91,6 +117,11 @@ export class PaperlessAPI {
         ...options.headers,
       },
     });
+
+    // DELETE endpoints answer `204 No Content`; there is no JSON to parse.
+    if (response.status === 204) {
+      return null;
+    }
 
     return response.json();
   }
@@ -177,8 +208,9 @@ export class PaperlessAPI {
     
     const response: any = await this.request(`/documents/?${params.toString()}`);
     
-    // Filter out content field and long URLs to reduce token usage
-    if (response.results) {
+    // Filter out content field and long URLs to reduce token usage.
+    // `request()` returns null for a 204, so this must not dereference blindly.
+    if (response?.results) {
       response.results = response.results.map((doc: any) => {
         const { content, download_url, thumbnail_url, ...rest } = doc;
         return {
