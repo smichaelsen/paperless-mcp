@@ -48,6 +48,51 @@ For Claude desktop app, edit `~/Library/Application Support/Claude/claude_deskto
 
 That's it! Now you can ask Claude to help you manage your Paperless-NGX documents.
 
+## Configuration
+
+The URL and token can come from positional arguments (`paperless-mcp <baseUrl> <token>`)
+or from the environment. Environment variables are used when the matching argument is
+missing, and are the only option in `--http` mode.
+
+| Variable | Purpose |
+| --- | --- |
+| `PAPERLESS_URL` | Base URL of your Paperless-NGX instance, e.g. `https://paperless.example`. |
+| `PAPERLESS_API_TOKEN` | Paperless API token. |
+| `PAPERLESS_API_TOKEN_FILE` | Path to a file containing the API token. Takes precedence over `PAPERLESS_API_TOKEN`. |
+| `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
+
+`PAPERLESS_API_TOKEN_FILE` is meant for Docker/Kubernetes secrets: the file is read once
+at startup, surrounding whitespace (including the trailing newline) is stripped, and an
+unreadable or empty file aborts startup with a clear message that never contains the
+token. A read-only mount is enough.
+
+```yaml
+services:
+  paperless-mcp:
+    image: paperless-mcp
+    environment:
+      PAPERLESS_URL: https://paperless.example
+      PAPERLESS_API_TOKEN_FILE: /run/secrets/paperless_token
+    secrets:
+      - paperless_token
+secrets:
+  paperless_token:
+    file: ./paperless_token.txt
+```
+
+### Logging
+
+Operational events are written to stderr as single-line JSON. A failed request logs only
+the HTTP method, a normalized endpoint class (`/documents/:id/`), the HTTP status, the
+duration in milliseconds and an error class:
+
+```json
+{"level":"error","event":"paperless_request_failed","method":"GET","endpoint":"/documents/:id/","status":500,"duration_ms":34,"error_class":"HttpStatusError"}
+```
+
+Tokens, authorization headers, request bodies, uploaded files, document titles/content
+and raw Paperless responses are never logged.
+
 ## Example Usage
 
 Here are some things you can ask Claude to do:
@@ -429,6 +474,8 @@ To run the server as an HTTP service, use the `--http` flag. You can also specif
 npm run start -- <baseUrl> <token> --http --port 3000
 ```
 
+- In `--http` mode the URL and token are read from the environment only — see
+  [Configuration](#configuration).
 - The MCP API will be available at `POST /mcp` on the specified port.
 - Each request is handled statelessly, following the [StreamableHTTPServerTransport](https://github.com/modelcontextprotocol/typescript-sdk) pattern.
 - GET and DELETE requests to `/mcp` will return 405 Method Not Allowed.

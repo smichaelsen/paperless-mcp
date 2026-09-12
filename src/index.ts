@@ -5,6 +5,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import { PaperlessAPI } from "./api/PaperlessAPI";
+import {
+  resolvePaperlessToken,
+  TOKEN_ENV,
+  TOKEN_FILE_ENV,
+} from "./config/credentials";
+import { logFatal, registerSecret } from "./logging";
 import { registerCorrespondentTools } from "./tools/correspondents";
 import { registerDocumentTools } from "./tools/documents";
 import { registerDocumentTypeTools } from "./tools/documentTypes";
@@ -24,18 +30,20 @@ async function main() {
   let baseUrl: string | undefined;
   let token: string | undefined;
 
+  // Throws a clear, value-free error if a *_FILE variable is unreadable.
+  const envToken = resolvePaperlessToken(process.env);
+  const envHint = `PAPERLESS_URL and ${TOKEN_ENV} (or ${TOKEN_FILE_ENV}) environment variables must be set.`;
+
   if (useHttp) {
     baseUrl = process.env.PAPERLESS_URL;
-    token = process.env.API_KEY;
+    token = envToken?.value;
     if (!baseUrl || !token) {
-      console.error(
-        "When using --http, PAPERLESS_URL and API_KEY environment variables must be set."
-      );
+      console.error(`When using --http, ${envHint}`);
       process.exit(1);
     }
   } else {
-    baseUrl = args[0];
-    token = args[1];
+    baseUrl = args[0] || process.env.PAPERLESS_URL;
+    token = args[1] || envToken?.value;
     if (!baseUrl || !token) {
       console.error(
         "Usage: paperless-mcp <baseUrl> <token> [--http] [--port <port>]"
@@ -43,12 +51,12 @@ async function main() {
       console.error(
         "Example: paperless-mcp http://localhost:8000 your-api-token --http --port 3000"
       );
-      console.error(
-        "When using --http, PAPERLESS_URL and API_KEY environment variables must be set."
-      );
+      console.error(`Alternatively, ${envHint}`);
       process.exit(1);
     }
   }
+
+  registerSecret(token);
 
   // Initialize API client and server once
   const api = new PaperlessAPI(baseUrl, token);
@@ -162,4 +170,8 @@ async function main() {
   }
 }
 
-main().catch((e) => console.error(e.message));
+main().catch((e) => {
+  // Never print the raw error: its message may embed a credential-bearing URL.
+  logFatal(e);
+  process.exitCode = 1;
+});

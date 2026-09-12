@@ -1,3 +1,23 @@
+import {
+  errorClass,
+  logRequestFailure,
+  normalizeEndpoint,
+  registerSecret,
+} from "../logging";
+
+/**
+ * Read and discard a response body. Failed responses must still be drained so
+ * the connection can be reused — but the payload is never inspected or logged,
+ * because it carries document titles, content and permissions.
+ */
+async function discardBody(response: Response): Promise<void> {
+  try {
+    await response.text();
+  } catch {
+    // Nothing to do — the body is being thrown away either way.
+  }
+}
+
 export class PaperlessAPI {
   constructor(
     private readonly baseUrl: string,
@@ -5,6 +25,49 @@ export class PaperlessAPI {
   ) {
     this.baseUrl = baseUrl;
     this.token = token;
+    // Belt and braces: even if the token ends up inside some third-party error
+    // message, the logger will scrub it.
+    registerSecret(token);
+  }
+
+  /**
+   * Perform a request and log only redacted operational metadata on failure:
+   * method, normalized endpoint class, status, duration and error class. The
+   * URL, headers, request body and Paperless response body are never logged.
+   */
+  private async fetchWithLogging(
+    method: string,
+    endpointPath: string,
+    url: string,
+    init: RequestInit
+  ): Promise<Response> {
+    const endpoint = normalizeEndpoint(endpointPath);
+    const startedAt = Date.now();
+    let response: Response;
+    try {
+      response = await fetch(url, init);
+    } catch (error) {
+      logRequestFailure({
+        method,
+        endpoint,
+        durationMs: Date.now() - startedAt,
+        errorClass: errorClass(error),
+      });
+      // Deliberately does not carry the URL: it could embed a credential.
+      throw new Error(`Paperless request failed: ${method} ${endpoint}`);
+    }
+
+    if (!response.ok) {
+      logRequestFailure({
+        method,
+        endpoint,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        errorClass: "HttpStatusError",
+      });
+    }
+
+    return response;
   }
 
   async request(path: string, options: RequestInit = {}) {
@@ -16,7 +79,8 @@ export class PaperlessAPI {
       "Accept-Language": "en-US,en;q=0.9",
     };
 
-    const response = await fetch(url, {
+    const method = (options.method ?? "GET").toUpperCase();
+    const response = await this.fetchWithLogging(method, path, url, {
       ...options,
       headers: {
         ...headers,
@@ -25,13 +89,7 @@ export class PaperlessAPI {
     });
 
     if (!response.ok) {
-      console.error({
-        error: "Error executing request",
-        url,
-        options,
-        status: response.status,
-        response: await response.json(),
-      });
+      await discardBody(response);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
@@ -80,8 +138,11 @@ export class PaperlessAPI {
       );
     }
 
-    const response = await fetch(
-      `${this.baseUrl}/api/documents/post_document/`,
+    const path = "/documents/post_document/";
+    const response = await this.fetchWithLogging(
+      "POST",
+      path,
+      `${this.baseUrl}/api${path}`,
       {
         method: "POST",
         headers: {
@@ -92,6 +153,7 @@ export class PaperlessAPI {
     );
 
     if (!response.ok) {
+      await discardBody(response);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
@@ -138,14 +200,23 @@ export class PaperlessAPI {
 
   async downloadDocument(id, asOriginal = false) {
     const query = asOriginal ? "?original=true" : "";
-    const response = await fetch(
-      `${this.baseUrl}/api/documents/${id}/download/${query}`,
+    const path = `/documents/${id}/download/`;
+    const response = await this.fetchWithLogging(
+      "GET",
+      path,
+      `${this.baseUrl}/api${path}${query}`,
       {
         headers: {
           Authorization: `Token ${this.token}`,
         },
       }
     );
+
+    if (!response.ok) {
+      await discardBody(response);
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
     return response;
   }
 
