@@ -31,7 +31,7 @@ import {
   secretsMatch,
 } from "../../src/config/httpAuth";
 import { createMcpHttpApp } from "../../src/http/app";
-import { isPublicRequest } from "../../src/http/auth";
+import { announcesBody, isPublicRequest } from "../../src/http/auth";
 import { logUnhandledRejection } from "../../src/http/processErrors";
 import { clearRegisteredSecrets, logFatal } from "../../src/logging";
 import {
@@ -545,15 +545,24 @@ describe("bearerCredential", () => {
 });
 
 /**
- * Issue #26: the health exemption was keyed on the **path alone**, so it
- * applied to every method. `express.json()` is mounted after this middleware
- * precisely so that an unauthenticated caller can never make the process
- * buffer a body — but an exempt path skipped auth and reached the parser
- * anyway. Measured against the built server: 24 concurrent unauthenticated
- * 9 MiB `POST /healthz` took RSS from 73 MiB to 663 MiB, against a documented
- * container limit of 256 MiB.
+ * Issue #26: the health exemption let unauthenticated requests reach
+ * `express.json()`, which is mounted after this middleware precisely so that
+ * cannot happen. It had **two** doors, and the first fix only closed one:
+ *
+ * - keyed on the **path alone**, the exemption applied to every method, so a
+ *   9 MiB `POST /healthz` was buffered and parsed uncredentialed;
+ * - scoped to `GET`/`HEAD`, a `GET /healthz` with
+ *   `Content-Type: application/json` still was, because `express.json()`
+ *   parses by content type and not by method — and `GET` is the method the
+ *   exemption has to allow. Measured at +381 MiB RSS for 24 concurrent 9 MiB
+ *   requests, against a documented container limit of 256 MiB, and scaling
+ *   linearly with the configured body limit.
+ *
+ * So the exemption now also requires that the request carry no body. Every
+ * case below asserts the parser did not run, not merely that the status was
+ * unhelpful.
  */
-describe("the health exemption is scoped to GET and HEAD", () => {
+describe("the health exemption is scoped to GET/HEAD with no body", () => {
   /**
    * An app whose body parser is observable. If `express.json()` ever runs for
    * a request, `req.body` is set and this route reports how many bytes it
@@ -628,6 +637,59 @@ describe("the health exemption is scoped to GET and HEAD", () => {
         });
         expect(response.status).toBe(200);
       });
+
+      // The second door. `GET` is the method the exemption *has* to allow,
+      // and `express.json()` keys off `Content-Type`, not the method — so
+      // this is the case that kept the hole open after the first fix.
+      it(`rejects ${method} ${path} carrying a JSON body, unparsed`, async () => {
+        const { app, parsed } = await serveWithParserProbe();
+        const response = await rawRequest({
+          port: app.port,
+          path,
+          method,
+          headers: {
+            ...jsonHeaders,
+            host: `127.0.0.1:${app.port}`,
+            "content-length": String(Buffer.byteLength(bigBody)),
+          },
+          body: bigBody,
+        });
+
+        expect(response.status).toBe(401);
+        expect(parsed()).toBe(0);
+      });
+
+      it(`rejects ${method} ${path} with a chunked body, unparsed`, async () => {
+        // No Content-Length to inspect: a chunked body is of unknown length,
+        // which is the worst case rather than an excuse to allow it.
+        const { app, parsed } = await serveWithParserProbe();
+        const response = await rawRequest({
+          port: app.port,
+          path,
+          method,
+          headers: {
+            ...jsonHeaders,
+            host: `127.0.0.1:${app.port}`,
+            "transfer-encoding": "chunked",
+          },
+          body: bigBody,
+        });
+
+        expect(response.status).toBe(401);
+        expect(parsed()).toBe(0);
+      });
+
+      it(`still exempts ${method} ${path} with an explicit zero length`, async () => {
+        // `Content-Length: 0` is a body-free request, and some probes send it.
+        const { app } = await serveWithParserProbe();
+        const response = await rawRequest({
+          port: app.port,
+          path,
+          method,
+          headers: { host: `127.0.0.1:${app.port}`, "content-length": "0" },
+        });
+        expect(response.status).toBe(200);
+      });
     }
   }
 
@@ -658,6 +720,34 @@ describe("the health exemption is scoped to GET and HEAD", () => {
     );
   });
 
+  it("answers a body-bearing GET identically on a probe path and elsewhere", async () => {
+    // Why a body revokes the exemption rather than earning its own 400: a
+    // distinct status here would re-open the route-existence oracle the test
+    // above closes. The rule is uniform — on every path, an unauthenticated
+    // request carrying a body is 401 and is never parsed.
+    const { app, parsed } = await serveWithParserProbe();
+    const send = (path: string) =>
+      rawRequest({
+        port: app.port,
+        path,
+        method: "GET",
+        headers: {
+          ...jsonHeaders,
+          host: `127.0.0.1:${app.port}`,
+          "content-length": String(Buffer.byteLength(bigBody)),
+        },
+        body: bigBody,
+      });
+
+    const onProbe = await send("/healthz");
+    const onUnknown = await send("/nonexistent");
+
+    expect(onProbe.status).toBe(401);
+    expect(onProbe.status).toBe(onUnknown.status);
+    expect(onProbe.body).toBe(onUnknown.body);
+    expect(parsed()).toBe(0);
+  });
+
   it("keeps the exemption available to an authenticated caller on any method", async () => {
     // Scoping the exemption must not make the paths unreachable — an
     // authenticated POST still gets the route's own answer (404: health
@@ -679,31 +769,91 @@ describe("the health exemption is scoped to GET and HEAD", () => {
 });
 
 describe("isPublicRequest", () => {
-  it("requires the method and the path to match", () => {
-    expect(isPublicRequest("GET", "/healthz")).toBe(true);
-    expect(isPublicRequest("HEAD", "/readyz")).toBe(true);
-    // One trailing slash is still normalized away.
-    expect(isPublicRequest("GET", "/healthz/")).toBe(true);
+  /** Only the three things the predicate reads. */
+  const req = (
+    method: string,
+    path: string,
+    headers: Record<string, string> = {}
+  ) => ({ method, path, headers }) as unknown as Parameters<
+    typeof isPublicRequest
+  >[0];
 
-    // The #26 regression, in one line.
-    expect(isPublicRequest("POST", "/healthz")).toBe(false);
-    expect(isPublicRequest("PUT", "/readyz")).toBe(false);
-    expect(isPublicRequest("DELETE", "/healthz")).toBe(false);
-    expect(isPublicRequest("OPTIONS", "/healthz")).toBe(false);
+  it("requires the method and the path to match", () => {
+    expect(isPublicRequest(req("GET", "/healthz"))).toBe(true);
+    expect(isPublicRequest(req("HEAD", "/readyz"))).toBe(true);
+    // One trailing slash is still normalized away.
+    expect(isPublicRequest(req("GET", "/healthz/"))).toBe(true);
+
+    // The first #26 door, in one line.
+    expect(isPublicRequest(req("POST", "/healthz"))).toBe(false);
+    expect(isPublicRequest(req("PUT", "/readyz"))).toBe(false);
+    expect(isPublicRequest(req("DELETE", "/healthz"))).toBe(false);
+    expect(isPublicRequest(req("OPTIONS", "/healthz"))).toBe(false);
 
     // A non-exempt path is never public, whatever the method.
-    expect(isPublicRequest("GET", "/mcp")).toBe(false);
-    expect(isPublicRequest("GET", "/healthz/../mcp")).toBe(false);
-    expect(isPublicRequest("GET", "/healthzz")).toBe(false);
-    expect(isPublicRequest("GET", "//healthz")).toBe(false);
+    expect(isPublicRequest(req("GET", "/mcp"))).toBe(false);
+    expect(isPublicRequest(req("GET", "/healthz/../mcp"))).toBe(false);
+    expect(isPublicRequest(req("GET", "/healthzz"))).toBe(false);
+    expect(isPublicRequest(req("GET", "//healthz"))).toBe(false);
 
     // HTTP methods are case-sensitive (RFC 9110 §9.1); a lowercase verb is
     // not the exempt one and is authenticated like anything else.
-    expect(isPublicRequest("get", "/healthz")).toBe(false);
+    expect(isPublicRequest(req("get", "/healthz"))).toBe(false);
+  });
+
+  it("refuses the exemption to anything carrying a body", () => {
+    // The second #26 door: the method and path are both exempt, and it is
+    // still not public, because `express.json()` would parse this.
+    expect(
+      isPublicRequest(req("GET", "/healthz", { "content-length": "1" }))
+    ).toBe(false);
+    expect(
+      isPublicRequest(
+        req("HEAD", "/readyz", { "transfer-encoding": "chunked" })
+      )
+    ).toBe(false);
+
+    // A body-free request is still public, however it says so.
+    expect(
+      isPublicRequest(req("GET", "/healthz", { "content-length": "0" }))
+    ).toBe(true);
+    expect(
+      isPublicRequest(
+        req("GET", "/healthz", { "content-type": "application/json" })
+      )
+    ).toBe(true);
   });
 
   it("exempts read-only methods only", () => {
     expect([...UNAUTHENTICATED_METHODS].sort()).toEqual(["GET", "HEAD"]);
+  });
+});
+
+describe("announcesBody", () => {
+  const headers = (h: Record<string, string | string[]>) =>
+    h as unknown as Parameters<typeof announcesBody>[0];
+
+  it("reads the two headers that actually frame a body", () => {
+    expect(announcesBody(headers({}))).toBe(false);
+    expect(announcesBody(headers({ "content-length": "0" }))).toBe(false);
+    expect(announcesBody(headers({ "content-length": " 0 " }))).toBe(false);
+    expect(announcesBody(headers({ "content-length": "1" }))).toBe(true);
+    expect(announcesBody(headers({ "content-length": "9437184" }))).toBe(true);
+    expect(announcesBody(headers({ "transfer-encoding": "chunked" }))).toBe(
+      true
+    );
+  });
+
+  it("treats anything unreadable as a body", () => {
+    // A malformed length is not a reason to relax: if it cannot be shown to
+    // be zero, assume there are bytes behind it.
+    expect(announcesBody(headers({ "content-length": "" }))).toBe(true);
+    expect(announcesBody(headers({ "content-length": "abc" }))).toBe(true);
+    expect(announcesBody(headers({ "content-length": "1.5" }))).toBe(true);
+    expect(announcesBody(headers({ "content-length": "-1" }))).toBe(true);
+    expect(announcesBody(headers({ "content-length": "0x10" }))).toBe(true);
+    // Duplicated header: Node can surface an array. The first value decides.
+    expect(announcesBody(headers({ "content-length": ["5", "0"] }))).toBe(true);
   });
 });
 
