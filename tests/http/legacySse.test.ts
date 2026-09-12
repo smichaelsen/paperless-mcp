@@ -3,8 +3,9 @@
  * shared server object leaks hardest: one instance connected to two live event
  * streams writes both clients' responses to whichever stream connected last.
  *
- * Issue #11 will gate or remove these routes; until then they carry the same
- * one-server-per-connection guarantee as `/mcp`.
+ * Issue #11 settled their fate: **off unless explicitly enabled**. When they
+ * are enabled they carry the same one-server-per-connection guarantee as
+ * `/mcp`, and the same authentication (see `auth.test.ts`).
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -12,8 +13,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createMcpHttpApp } from "../../src/http/app";
+import {
+  ENABLE_LEGACY_SSE_ENV,
+  legacySseEnabled,
+} from "../../src/http/legacyFlag";
 import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
-import { createBarrier, rawRequest, RunningApp, startApp } from "./harness";
+import { createBarrier, NO_AUTH, rawRequest, RunningApp, startApp } from "./harness";
 
 const SECURITY = {
   allowedHosts: DEFAULT_ALLOWED_HOSTS,
@@ -84,7 +89,12 @@ describe("legacy SSE routes", () => {
   it("gives each event stream its own server instance and its own state", async () => {
     const barrier = createBarrier(2);
     running = await startApp(
-      createMcpHttpApp({ createServer: factory(barrier), security: SECURITY })
+      createMcpHttpApp({
+        auth: NO_AUTH,
+        createServer: factory(barrier),
+        security: SECURITY,
+        enableLegacySse: true,
+      })
     );
 
     const [a, b] = await Promise.all([
@@ -107,7 +117,12 @@ describe("legacy SSE routes", () => {
 
   it("keeps per-session state private to its own session", async () => {
     running = await startApp(
-      createMcpHttpApp({ createServer: factory(), security: SECURITY })
+      createMcpHttpApp({
+        auth: NO_AUTH,
+        createServer: factory(),
+        security: SECURITY,
+        enableLegacySse: true,
+      })
     );
 
     const a = await connectSse(running.url, "sse-a");
@@ -133,7 +148,12 @@ describe("legacy SSE routes", () => {
 
   it("refuses a message for an unknown session without echoing the id", async () => {
     running = await startApp(
-      createMcpHttpApp({ createServer: factory(), security: SECURITY })
+      createMcpHttpApp({
+        auth: NO_AUTH,
+        createServer: factory(),
+        security: SECURITY,
+        enableLegacySse: true,
+      })
     );
 
     const response = await rawRequest({
@@ -147,21 +167,41 @@ describe("legacy SSE routes", () => {
     expect(response.body).not.toContain("forged-session-id");
   });
 
-  it("can be gated off in one option", async () => {
+  it("is absent unless explicitly enabled", async () => {
+    // The default. `enableLegacySse` is not passed at all, which is how
+    // `createMcpHttpApp` is called everywhere except an explicit opt-in.
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: factory(),
         security: SECURITY,
-        enableLegacySse: false,
       })
     );
 
-    const response = await rawRequest({
+    const sse = await rawRequest({
       port: running.port,
       path: "/sse",
       method: "GET",
       headers: { accept: "text/event-stream" },
     });
-    expect(response.status).toBe(404);
+    expect(sse.status).toBe(404);
+
+    // Both halves of the transport, not just the stream.
+    const messages = await rawRequest({
+      port: running.port,
+      path: "/messages?sessionId=x",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(messages.status).toBe(404);
+  });
+
+  it("stays off for an unset, blank or misspelled flag", () => {
+    expect(legacySseEnabled({})).toBe(false);
+    expect(legacySseEnabled({ [ENABLE_LEGACY_SSE_ENV]: "" })).toBe(false);
+    expect(legacySseEnabled({ [ENABLE_LEGACY_SSE_ENV]: "ture" })).toBe(false);
+    expect(legacySseEnabled({ [ENABLE_LEGACY_SSE_ENV]: "false" })).toBe(false);
+    expect(legacySseEnabled({ [ENABLE_LEGACY_SSE_ENV]: " True " })).toBe(true);
+    expect(legacySseEnabled({ [ENABLE_LEGACY_SSE_ENV]: "1" })).toBe(true);
   });
 });

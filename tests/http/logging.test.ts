@@ -16,7 +16,7 @@ import {
 } from "../../src/http/processErrors";
 import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
 import { clearRegisteredSecrets, registerSecret } from "../../src/logging";
-import { connectClient, initializeBody, rawRequest, RunningApp, startApp } from "./harness";
+import { connectClient, initializeBody, NO_AUTH, rawRequest, RunningApp, startApp } from "./harness";
 
 const SECURITY = {
   allowedHosts: DEFAULT_ALLOWED_HOSTS,
@@ -55,6 +55,7 @@ describe("HTTP transport logging", () => {
   it("writes nothing to stdout across a full request lifecycle", async () => {
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: () => {
           const server = new McpServer({ name: "log-test", version: "1.0.0" });
           server.registerTool(
@@ -65,6 +66,7 @@ describe("HTTP transport logging", () => {
           return server;
         },
         security: SECURITY,
+        enableLegacySse: true,
       })
     );
 
@@ -90,6 +92,7 @@ describe("HTTP transport logging", () => {
     registerSecret(TOKEN);
     running = await startApp(
       createMcpHttpApp({
+        auth: NO_AUTH,
         createServer: () => {
           // Stands in for anything that can throw while a request is being set
           // up; its message carries a credential the way a fetch failure does.

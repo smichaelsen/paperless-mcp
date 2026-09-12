@@ -8,6 +8,22 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Express } from "express";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { HttpAuthConfig } from "../../src/config/httpAuth";
+import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
+
+/**
+ * For the tests that are about something other than authentication. Auth is a
+ * required option on `createMcpHttpApp`, so every one of them has to say out
+ * loud that it is running without it; `auth.test.ts` is where the real
+ * configurations are exercised.
+ */
+export const NO_AUTH: HttpAuthConfig = { mode: "disabled" };
+
+/** The default Host/Origin policy, which most tests do not vary. */
+export const SECURITY = {
+  allowedHosts: DEFAULT_ALLOWED_HOSTS,
+  allowedOrigins: [] as string[],
+};
 
 export interface RunningApp {
   port: number;
@@ -34,14 +50,23 @@ export async function startApp(app: Express): Promise<RunningApp> {
   };
 }
 
-/** Connect one MCP client over Streamable HTTP and run `initialize`. */
+/**
+ * Connect one MCP client over Streamable HTTP and run `initialize`. With
+ * `secret`, the client presents it as a bearer token on every request — the
+ * end-to-end path a real authenticated client takes.
+ */
 export async function connectClient(
   baseUrl: string,
-  name: string
+  name: string,
+  secret?: string
 ): Promise<Client> {
   const client = new Client({ name, version: "1.0.0" });
   await client.connect(
-    new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`))
+    new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+      requestInit: secret
+        ? { headers: { authorization: `Bearer ${secret}` } }
+        : undefined,
+    })
   );
   return client;
 }
