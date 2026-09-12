@@ -27,12 +27,18 @@
  * - after the rate limiter, so the secret cannot be brute-forced at line rate;
  * - before the body parser, so an unauthenticated caller can never make this
  *   process buffer and parse a multi-megabyte body.
+ *
+ * That last guarantee is the reason the health exemption is scoped to `GET`
+ * and `HEAD` (issue #26). While it was keyed on the path alone, a `POST` to an
+ * exempt path skipped this middleware and reached `express.json()` — the one
+ * hole in an ordering the rest of this comment describes as airtight.
  */
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import {
   bearerCredential,
   HttpAuthConfig,
   secretsMatch,
+  UNAUTHENTICATED_METHODS,
   UNAUTHENTICATED_PATHS,
 } from "../config/httpAuth";
 import { log } from "../logging";
@@ -54,8 +60,20 @@ function unauthorized(res: Response): void {
   });
 }
 
-/** Does this path sit outside the authentication boundary? */
-export function isPublicPath(path: string): boolean {
+/**
+ * Does this request sit outside the authentication boundary?
+ *
+ * **Both** halves have to match: an exempt path on a non-exempt method is not
+ * exempt. Taking the path alone was issue #26 — a 9 MiB `POST /healthz`
+ * skipped authentication and was buffered and parsed by `express.json()`,
+ * which is mounted after this middleware for exactly the opposite reason.
+ *
+ * The method is deliberately part of the same predicate rather than a second
+ * check at the call site: one question, answered in one place, so a future
+ * exemption cannot be added with only half the policy applied.
+ */
+export function isPublicRequest(method: string, path: string): boolean {
+  if (UNAUTHENTICATED_METHODS.indexOf(method) === -1) return false;
   // `req.path` has no query string, but a trailing slash is still possible.
   const normalized =
     path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
@@ -74,7 +92,7 @@ export function bearerAuth(config: HttpAuthConfig): RequestHandler {
       next();
       return;
     }
-    if (isPublicPath(req.path)) {
+    if (isPublicRequest(req.method, req.path)) {
       next();
       return;
     }
