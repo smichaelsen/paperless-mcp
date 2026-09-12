@@ -30,3 +30,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Isolated worktrees used by background agents
+.claude/worktrees/

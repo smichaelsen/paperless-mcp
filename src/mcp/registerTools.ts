@@ -23,7 +23,6 @@ import { z } from "zod";
 import { PaperlessAPI } from "../api/PaperlessAPI";
 import type { ToolAccessMode } from "../config/toolAccess";
 import { resolveToolAccess } from "../config/toolAccess";
-import { log } from "../logging";
 import { registerCorrespondentTools } from "../tools/correspondents";
 import { registerDocumentTools } from "../tools/documents";
 import { registerDocumentTypeTools } from "../tools/documentTypes";
@@ -171,7 +170,7 @@ export function registerAllTools(
   server: McpServer,
   api: PaperlessAPI,
   mode: ToolAccessMode = resolveToolAccess()
-): void {
+): string[] {
   const registered: string[] = [];
   // The tool modules only ever call `server.tool(...)`; one of them declares
   // its parameter as `McpServer`, so the adapter is cast to satisfy it.
@@ -185,10 +184,8 @@ export function registerAllTools(
   registerCorrespondentTools(registrar, api);
   registerDocumentTypeTools(registrar, api);
 
-  log("info", "tool_access_mode", {
-    mode: mode.label,
-    writes: mode.writes,
-    destructive: mode.destructive,
-    tools: registered.length,
-  });
+  // Deliberately not logged here: under `--http` a server is built per
+  // connection, so logging the mode at registration time repeated the same
+  // unchanging line on every request. The caller logs it once instead.
+  return registered;
 }
