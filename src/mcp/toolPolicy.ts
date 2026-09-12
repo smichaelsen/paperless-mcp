@@ -147,11 +147,18 @@ export const BULK_EDIT_DESTRUCTIVE_ARGS = [
  * `pages` as write mode advertises it. The declared description documents the
  * `delete_pages` format, which is not the method it can serve here: for `split`
  * the value lists the page *ranges* that each become their own document.
+ *
+ * The last clause is not decoration. Paperless calls `method(documents,
+ * **parameters)` and its bulk-edit functions take no `**kwargs`, so an argument
+ * sent with a method that does not accept it raises a `TypeError` upstream and
+ * comes back as an opaque 400 — it is not ignored. Telling a model otherwise
+ * invites it to pass `pages` defensively and then fail undiagnosably.
  */
 const WRITE_PAGES_DESCRIPTION =
   "Page specification for the 'split' method: comma-separated page ranges, each " +
   "of which becomes a new document. '1-2,3-4' splits a four-page document into " +
-  "two. Required by 'split' and ignored by every other method available here.";
+  "two. Required by 'split', and send it only with 'split': Paperless rejects " +
+  "the whole request when an argument is passed to a method that does not take it.";
 
 const WRITE_METHOD_DESCRIPTION =
   "The bulk operation to perform: set_correspondent (assign sender/receiver), " +
