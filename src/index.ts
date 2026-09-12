@@ -30,20 +30,21 @@ async function main() {
   let baseUrl: string | undefined;
   let token: string | undefined;
 
-  // Throws a clear, value-free error if a *_FILE variable is unreadable.
-  const envToken = resolvePaperlessToken(process.env);
   const envHint = `PAPERLESS_URL and ${TOKEN_ENV} (or ${TOKEN_FILE_ENV}) environment variables must be set.`;
 
   if (useHttp) {
     baseUrl = process.env.PAPERLESS_URL;
-    token = envToken?.value;
+    token = resolvePaperlessToken(process.env)?.value;
     if (!baseUrl || !token) {
       console.error(`When using --http, ${envHint}`);
       process.exit(1);
     }
   } else {
     baseUrl = args[0] || process.env.PAPERLESS_URL;
-    token = args[1] || envToken?.value;
+    // Resolved lazily: a positional token wins, and `||` short-circuits, so a
+    // stale or unmounted PAPERLESS_API_TOKEN_FILE in the environment cannot
+    // break the documented `paperless-mcp <baseUrl> <token>` form.
+    token = args[1] || resolvePaperlessToken(process.env)?.value;
     if (!baseUrl || !token) {
       console.error(
         "Usage: paperless-mcp <baseUrl> <token> [--http] [--port <port>]"

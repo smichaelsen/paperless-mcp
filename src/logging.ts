@@ -65,12 +65,18 @@ export function redact(value: string): string {
   return out;
 }
 
-const SAFE_SEGMENT = /^[A-Za-z][A-Za-z0-9_-]*$/;
+/**
+ * Every Paperless REST path segment is lowercase snake_case (`documents`,
+ * `bulk_edit`, `post_document`, `document_types`, `download`). Allowing digits,
+ * hyphens or uppercase would let a slug, a UUID or a document title pass
+ * through unmasked, so the allowlist is deliberately narrow.
+ */
+const SAFE_SEGMENT = /^[a-z][a-z_]*$/;
 
 /**
  * Reduce a request path to an endpoint *class*: the query string is dropped and
- * every segment that is not a plain identifier (numeric ids, UUIDs, slugs —
- * anything that could carry user data) becomes `:id`.
+ * every segment that is not a known-shape identifier (numeric ids, UUIDs, slugs
+ * — anything that could carry user data) becomes `:id`.
  *
  * `/documents/4711/?query=tax%20return` -> `/documents/:id/`
  */
@@ -85,21 +91,53 @@ export function normalizeEndpoint(path: string): string {
   return withoutQuery.endsWith("/") ? `${joined}/` : joined;
 }
 
+/**
+ * Errno-style codes only. Anything else is ignored, so a third-party library
+ * cannot smuggle free text into the log through a `code` property.
+ */
+const ERRNO_CODE = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * Dig an errno code out of a thrown value.
+ *
+ * Node's `fetch` wraps transport failures as `TypeError: fetch failed` with the
+ * real problem on `cause`. With happy-eyeballs (any host that resolves to both
+ * A and AAAA records, `localhost` included) that cause is an `AggregateError`
+ * whose per-address failures sit in `errors[]` — so the walk has to look there
+ * too, or every refused connection degrades to a useless `TypeError:Error`.
+ */
+function errnoCode(value: unknown, depth = 0): string | undefined {
+  if (depth > 3 || !value || typeof value !== "object") return undefined;
+
+  const code = (value as { code?: unknown }).code;
+  if (typeof code === "string" && ERRNO_CODE.test(code)) return code;
+
+  const errors = (value as { errors?: unknown }).errors;
+  if (Array.isArray(errors)) {
+    for (const nested of errors) {
+      const nestedCode = errnoCode(nested, depth + 1);
+      if (nestedCode) return nestedCode;
+    }
+  }
+
+  return errnoCode((value as { cause?: unknown }).cause, depth + 1);
+}
+
 /** A coarse, safe classification of a thrown value. Never includes a message. */
 export function errorClass(error: unknown): string {
-  if (error instanceof Error) {
-    const name = error.name || "Error";
-    const cause = (error as { cause?: unknown }).cause;
-    // Node's fetch surfaces the interesting part as `cause.code`.
-    if (cause && typeof (cause as { code?: unknown }).code === "string") {
-      return `${name}:${(cause as { code: string }).code}`;
-    }
-    if (cause instanceof Error && cause.name && cause.name !== name) {
-      return `${name}:${cause.name}`;
-    }
-    return name;
+  if (!(error instanceof Error)) return typeof error;
+
+  const name = error.name || "Error";
+  const code = errnoCode(error);
+  if (code) return `${name}:${code}`;
+
+  const cause = (error as { cause?: unknown }).cause;
+  // A bare `Error` cause adds nothing; only a distinct, named class does.
+  if (cause instanceof Error && cause.name && cause.name !== name) {
+    if (cause.name !== "Error") return `${name}:${cause.name}`;
   }
-  return typeof error;
+
+  return name;
 }
 
 /** Where log lines go. Indirection keeps tests able to capture output. */

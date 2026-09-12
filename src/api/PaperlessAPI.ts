@@ -31,9 +31,10 @@ export class PaperlessAPI {
   }
 
   /**
-   * Perform a request and log only redacted operational metadata on failure:
-   * method, normalized endpoint class, status, duration and error class. The
-   * URL, headers, request body and Paperless response body are never logged.
+   * Perform a request, returning only successful responses. Failures are logged
+   * as redacted operational metadata — method, normalized endpoint class,
+   * status, duration and error class. The URL, headers, request body and
+   * Paperless response body are never logged.
    */
   private async fetchWithLogging(
     method: string,
@@ -53,7 +54,8 @@ export class PaperlessAPI {
         durationMs: Date.now() - startedAt,
         errorClass: errorClass(error),
       });
-      // Deliberately does not carry the URL: it could embed a credential.
+      // Neither the URL nor the original error is carried along: both can embed
+      // a credential, and this message reaches the MCP client verbatim.
       throw new Error(`Paperless request failed: ${method} ${endpoint}`);
     }
 
@@ -65,6 +67,8 @@ export class PaperlessAPI {
         durationMs: Date.now() - startedAt,
         errorClass: "HttpStatusError",
       });
+      await discardBody(response);
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     return response;
@@ -87,11 +91,6 @@ export class PaperlessAPI {
         ...options.headers,
       },
     });
-
-    if (!response.ok) {
-      await discardBody(response);
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
 
     return response.json();
   }
@@ -152,11 +151,6 @@ export class PaperlessAPI {
       }
     );
 
-    if (!response.ok) {
-      await discardBody(response);
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
     return response.json();
   }
 
@@ -211,11 +205,6 @@ export class PaperlessAPI {
         },
       }
     );
-
-    if (!response.ok) {
-      await discardBody(response);
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
 
     return response;
   }

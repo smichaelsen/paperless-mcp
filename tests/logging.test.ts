@@ -32,13 +32,18 @@ describe("normalizeEndpoint", () => {
     expect(normalizeEndpoint("/documents/?page=2")).toBe("/documents/");
   });
 
-  it("masks anything that is not a plain identifier", () => {
+  it("masks anything that is not a lowercase snake_case segment", () => {
     expect(normalizeEndpoint("/documents/9f8e-uuid-1234/")).toBe(
       "/documents/:id/"
     );
     expect(normalizeEndpoint("/documents/Invoice%20Acme/")).toBe(
       "/documents/:id/"
     );
+    // Mixed case and hyphens are exactly what a document title looks like.
+    expect(normalizeEndpoint("/tags/SENTINEL-DOC-TITLE-Bescheid-2024/")).toBe(
+      "/tags/:id/"
+    );
+    expect(normalizeEndpoint("/documents/tax-return/")).toBe("/documents/:id/");
   });
 
   it("handles the root path", () => {
@@ -92,10 +97,45 @@ describe("errorClass", () => {
     expect(errorClass(new TypeError("token abc is bad"))).toBe("TypeError");
   });
 
-  it("appends a fetch cause code when present", () => {
-    const error = new TypeError("fetch failed");
-    (error as { cause?: unknown }).cause = { code: "ECONNREFUSED" };
+  it("appends the errno code of a fetch cause", () => {
+    // The shape Node produces for a single-address connection failure.
+    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:80"), {
+      code: "ECONNREFUSED",
+    });
+    const error = new TypeError("fetch failed", { cause });
     expect(errorClass(error)).toBe("TypeError:ECONNREFUSED");
+  });
+
+  it("digs the errno code out of a happy-eyeballs AggregateError", () => {
+    // Multi-address failures nest the real codes in `errors[]`; some Node
+    // versions leave the AggregateError itself without a `code`.
+    const cause = new AggregateError(
+      [
+        Object.assign(new Error("connect ECONNREFUSED ::1:80"), {
+          code: "ECONNREFUSED",
+        }),
+        Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:80"), {
+          code: "ECONNREFUSED",
+        }),
+      ],
+      "all connection attempts failed"
+    );
+    const error = new TypeError("fetch failed", { cause });
+    expect(errorClass(error)).toBe("TypeError:ECONNREFUSED");
+  });
+
+  it("never degrades to a useless bare-Error cause class", () => {
+    const error = new TypeError("fetch failed", { cause: new Error("nope") });
+    expect(errorClass(error)).toBe("TypeError");
+  });
+
+  it("ignores a non-errno code so free text cannot reach the log", () => {
+    const cause = Object.assign(new Error("x"), {
+      code: "failed while fetching SENTINEL-DOC-TITLE",
+    });
+    expect(errorClass(new TypeError("fetch failed", { cause }))).toBe(
+      "TypeError"
+    );
   });
 
   it("handles non-errors", () => {
