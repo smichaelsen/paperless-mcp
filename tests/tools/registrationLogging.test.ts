@@ -50,6 +50,22 @@ describe("registerAllTools logging", () => {
     expect(stderr).not.toHaveBeenCalled();
   });
 
+  it("never reads the environment, so its warnings cannot repeat per request", () => {
+    // `mode` is a required parameter precisely so registration cannot call
+    // `resolveToolAccess()` itself. Resolution emits warnings for malformed
+    // settings; doing it here would put those on every HTTP request, which is
+    // the same defect as logging the mode here.
+    const previous = process.env.PAPERLESS_ALLOW_WRITES;
+    process.env.PAPERLESS_ALLOW_WRITES = "ture";
+    try {
+      for (let i = 0; i < 3; i += 1) build(toolAccessMode(false, false));
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.PAPERLESS_ALLOW_WRITES;
+      else process.env.PAPERLESS_ALLOW_WRITES = previous;
+    }
+  });
+
   it.each(MODES)(
     "returns the %s surface so the caller can log the count once",
     (_label, mode, expected) => {
