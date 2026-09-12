@@ -1,0 +1,71 @@
+paperless-mcp — third-party attribution
+
+This project as a whole is licensed under the MIT License; see LICENSE. This
+file records the third-party work it is derived from, and the terms that work
+carries. It travels with the package: `NOTICE` is listed in the `files` field
+of package.json, so it is present in every published npm tarball.
+
+---------------------------------------------------------------------------
+Upstream: nloui/paperless-mcp
+---------------------------------------------------------------------------
+
+This project is a hard fork of https://github.com/nloui/paperless-mcp, taken at
+commit 4ba7457 (2025-11-10). Parts of this tree are still derived from that
+work. Measured by `git blame` against the set of upstream commits, 530 of the
+3606 lines under src/ (15%) were written upstream:
+
+    src/api/PaperlessAPI.ts        317 lines,  177 upstream (56%)
+    src/tools/documents.ts         156 lines,  126 upstream (81%)
+    src/tools/tags.ts              116 lines,   82 upstream (71%)
+    src/tools/correspondents.ts     84 lines,   51 upstream (61%)
+    src/tools/documentTypes.ts      83 lines,   51 upstream (61%)
+    src/index.ts                   179 lines,   43 upstream (24%)
+    (18 other files)                             0 upstream
+
+Portions copyright (c) 2024-2025 Nick Loui and the paperless-mcp contributors,
+licensed under the ISC license, reproduced below.
+
+Upstream's contributors, from `git log 4ba7457`: Nick Loui, Baruch Odem,
+Henry Mao, Anaïs Betts, Lawrence Sinclair, and codegen-sh[bot]. Each retains
+copyright in their own contributions; "and the paperless-mcp contributors"
+above is meant to cover them.
+
+### How that ISC notice was arrived at — read this before relying on it
+
+The upstream repository ships **no** license text: no LICENSE file in the
+repository, and none in its published npm package either (the tarball of
+`@nloui/paperless-mcp@1.0.0` contains eight files — six `src/*.js`,
+package.json and README.md). What it does declare is `"license": "ISC"` and
+`"author": "Nick Loui"` in its package.json, unchanged from its first commit
+(2024-12-27) to today.
+
+So there is no upstream copyright notice to preserve verbatim, and the one
+above is a **reconstruction**, not a quotation: the name comes from that
+`author` field, the years from the range of upstream's commits (2024-12-27 to
+2025-11-11), and the license text below is the canonical ISC text rather than
+anything upstream published.
+
+ISC and MIT are both permissive licenses whose only substantive condition is
+that the copyright and permission notices travel with the software.
+Redistributing ISC-licensed code as part of an MIT-licensed work, with the
+upstream notice preserved, is common practice; that is what this file does. If
+upstream ever publishes a LICENSE file, this section should be replaced with
+whatever notice it contains.
+
+---------------------------------------------------------------------------
+ISC License (canonical text), applying to the upstream portions above
+---------------------------------------------------------------------------
+
+Copyright (c) 2024-2025 Nick Loui and the paperless-mcp contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
