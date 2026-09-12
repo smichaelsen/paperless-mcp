@@ -2,6 +2,26 @@
 
 An MCP (Model Context Protocol) server for interacting with a Paperless-NGX API server. This server provides tools for managing documents, tags, correspondents, and document types in your Paperless-NGX instance.
 
+> [!IMPORTANT]
+> **Breaking change — the server now starts read-only.**
+>
+> Every tool that can change your Paperless instance (`post_document`,
+> `update_document`, `create_*`, `update_tag`, `bulk_edit_*`, `delete_tag`) is
+> **absent from `tools/list`** until you opt in. An existing installation that
+> is not changed keeps working, but can only read.
+>
+> To restore exactly the behaviour of earlier versions, start the server with
+> **both** switches:
+>
+> ```bash
+> PAPERLESS_ALLOW_WRITES=true PAPERLESS_ALLOW_DESTRUCTIVE=true paperless-mcp …
+> # or:  paperless-mcp … --allow-writes --allow-destructive
+> ```
+>
+> To let the assistant file and tag documents without ever being able to delete
+> one, set only `PAPERLESS_ALLOW_WRITES=true`. See
+> [Tool access modes](#tool-access-modes).
+
 ## Supported versions
 
 | | Supported |
@@ -85,6 +105,8 @@ is not even read in that case. In `--http` mode the environment is the only sour
 | `PAPERLESS_API_TOKEN` | Paperless API token. |
 | `PAPERLESS_API_TOKEN_FILE` | Path to a file containing the API token. Takes precedence over `PAPERLESS_API_TOKEN`. |
 | `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
+| `PAPERLESS_ALLOW_WRITES` | Register the write-class tools. Off by default — see [Tool access modes](#tool-access-modes). |
+| `PAPERLESS_ALLOW_DESTRUCTIVE` | Register the destructive-class tools. Off by default, and never implied by `PAPERLESS_ALLOW_WRITES`. |
 
 `PAPERLESS_API_TOKEN_FILE` is meant for Docker/Kubernetes secrets: the file is read once
 at startup, surrounding whitespace (including the trailing newline) is stripped, and an
@@ -118,6 +140,143 @@ duration in milliseconds and an error class:
 Tokens, authorization headers, request bodies, uploaded files, document titles/content
 and raw Paperless responses are never logged.
 
+## Tool access modes
+
+Every tool belongs to exactly one access class:
+
+- **read** — cannot change anything in Paperless.
+- **write** — creates or updates objects. Never deletes one, never replaces a
+  permission set.
+- **destructive** — deletes documents, pages or objects, or replaces
+  permissions. Effects that cannot be undone from this server.
+
+The process starts **read-only**, and the two opt-ins are independent:
+enabling writes does *not* enable destructive operations. Whatever is not
+enabled is **never registered**, so it is absent from `tools/list` rather than
+advertised-and-refusing — a model cannot ask for a tool it cannot see, and your
+client's allowlist has less to cover.
+
+| Mode | Start it with | Tools advertised |
+| --- | --- | --- |
+| **read-only** (default) | nothing to set | **9** |
+| **write** | `PAPERLESS_ALLOW_WRITES=true` or `--allow-writes` | **16** |
+| **destructive** | additionally `PAPERLESS_ALLOW_DESTRUCTIVE=true` or `--allow-destructive` | **20** |
+
+| Variable | Flag | Purpose |
+| --- | --- | --- |
+| `PAPERLESS_ALLOW_WRITES` | `--allow-writes` | Register the write-class tools. |
+| `PAPERLESS_ALLOW_DESTRUCTIVE` | `--allow-destructive` | Register the destructive-class tools. Never implied by `PAPERLESS_ALLOW_WRITES`. |
+
+> [!NOTE]
+> The flags are positional-argument-safe only *after* the URL and the token
+> (`paperless-mcp https://paperless.example <token> --allow-writes`) or in
+> `--http` mode, which ignores positional arguments. If you rely on
+> `PAPERLESS_URL`/`PAPERLESS_API_TOKEN` for a stdio server, use the environment
+> variables for these switches too: the first positional argument is still read
+> as the base URL.
+
+Accepted true values are `1`, `true`, `yes`, `y`, `on`, `enable`, `enabled`
+(case-insensitive). Anything unrecognized is treated as **off** and logged:
+a typo must never widen what the server exposes. `PAPERLESS_ALLOW_DESTRUCTIVE`
+on its own also enables writes — every destructive operation is a write — and
+says so in the log.
+
+The active mode is logged once at startup:
+
+```json
+{"level":"info","event":"tool_access_mode","mode":"write","writes":true,"destructive":false,"tools":16}
+```
+
+### Tool classification
+
+| Tool | Class | `readOnlyHint` | `destructiveHint` | `idempotentHint` |
+| --- | --- | --- | --- | --- |
+| `get_document` | read | true | false | true |
+| `search_documents` | read | true | false | true |
+| `download_document` | read | true | false | true |
+| `list_tags` | read | true | false | true |
+| `get_tag` | read | true | false | true |
+| `list_correspondents` | read | true | false | true |
+| `get_correspondent` | read | true | false | true |
+| `list_document_types` | read | true | false | true |
+| `get_document_type` | read | true | false | true |
+| `post_document` | write | false | false | false |
+| `create_tag` | write | false | false | false |
+| `create_correspondent` | write | false | false | false |
+| `create_document_type` | write | false | false | false |
+| `update_document` | write | false | true | true |
+| `update_tag` | write | false | true | true |
+| `bulk_edit_documents` | write (narrowed) / destructive | false | true | false |
+| `delete_tag` | destructive | false | true | true |
+| `bulk_edit_tags` | destructive | false | true | true |
+| `bulk_edit_correspondents` | destructive | false | true | true |
+| `bulk_edit_document_types` | destructive | false | true | true |
+
+`openWorldHint` is `false` for every tool: they all talk to exactly one
+configured Paperless instance.
+
+`update_*` are marked destructive because they overwrite: `tags` replaces the
+whole tag list, and the nullable relations clear a field outright. The
+`bulk_edit_*` object tools are destructive in *both* their operations —
+`delete` removes the objects, and `set_permissions` with `merge: false`
+replaces the permission set.
+
+### `bulk_edit_documents`
+
+This is the one tool whose destructiveness depends on an argument: the same
+`method` enum spans setting a correspondent and permanently deleting documents.
+It is therefore registered with a **narrowed contract** in write mode:
+
+- `method` offers only `set_correspondent`, `set_document_type`,
+  `set_storage_path`, `add_tag`, `remove_tag`, `modify_tags`, `reprocess`,
+  `merge`, `split`, `rotate`;
+- `delete`, `delete_pages` and `set_permissions` are not in the advertised enum
+  and are refused by the handler as well;
+- the `delete_originals`, `pages` and `permissions` arguments are removed from
+  the schema, and `merge`/`split` are sent with an explicit
+  `delete_originals: false` — so they create a new document and leave the
+  originals in place.
+
+With `PAPERLESS_ALLOW_DESTRUCTIVE` the full enum and all arguments come back.
+
+### Recommended client allowlist
+
+Server-side gating decides what *exists*; the client's allowlist decides what
+runs without asking. Because unavailable tools are absent, a read-only server
+needs no allowlist at all — everything it offers is safe to auto-approve:
+
+```
+paperless:get_document, paperless:search_documents, paperless:download_document,
+paperless:list_tags, paperless:get_tag, paperless:list_correspondents,
+paperless:get_correspondent, paperless:list_document_types, paperless:get_document_type
+```
+
+Run the narrowest mode each client needs, rather than one permissive server for
+everything:
+
+- an assistant that answers questions about your documents → read-only;
+- an assistant that files and tags incoming mail → `--allow-writes`, allowlist
+  the read tools plus `post_document`, `update_document` and `create_*`;
+- a cleanup session → `--allow-destructive`, allowlist nothing.
+
+### Approval policy
+
+- **Auto-approve** the read class only.
+- **Ask every time** for the write class. `update_document` and
+  `bulk_edit_documents` act on many documents at once; see the `documents`
+  array before it runs.
+- **Ask, and read the arguments**, for the destructive class. Nothing here can
+  be undone from this server: `delete_tag` strips the tag from every document
+  that uses it, `bulk_edit_documents` with `delete` removes documents
+  permanently, and `set_permissions` with `merge: false` replaces an existing
+  permission set rather than adding to it.
+- Keep destructive operations out of any unattended or scheduled run: start
+  those processes without `PAPERLESS_ALLOW_DESTRUCTIVE` so the tools are not
+  there to be called.
+- Give the MCP server its own Paperless account with only the permissions it
+  needs. The access mode is a guard rail in this process; the Paperless
+  permission model is the one an attacker cannot argue with.
+
 ## Example Usage
 
 Here are some things you can ask Claude to do:
@@ -130,6 +289,11 @@ Here are some things you can ask Claude to do:
 - "Create a new document type called 'Bank Statement'"
 
 ## Available Tools
+
+Which of these a client actually sees depends on the access mode: by default
+only the read class is registered. See
+[Tool access modes](#tool-access-modes) for the classification of every tool
+and for the narrowed `bulk_edit_documents` contract in write mode.
 
 ### Document Operations
 
@@ -525,7 +689,9 @@ This MCP server implements endpoints from the Paperless-NGX REST API. For more d
 
 ## Running the MCP Server
 
-The MCP server can be run in two modes:
+The MCP server can be run over two transports. Both honour `--allow-writes` and
+`--allow-destructive` (and their environment equivalents); without them the
+server is read-only — see [Tool access modes](#tool-access-modes).
 
 ### 1. stdio (default)
 

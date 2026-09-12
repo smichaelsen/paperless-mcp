@@ -1,0 +1,272 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Download a document file as base64-encoded data. Choose between original uploaded file or processed/archived version with OCR improvements.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Document ID to download. Get this from search_documents or get_document results.",
+          "type": "number"
+        },
+        "original": {
+          "description": "Whether to download the original uploaded file (true) or the processed/archived version (false, default). Original files preserve exact formatting but may not include OCR improvements.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "download_document"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Retrieve a single correspondent by its ID, including its name and matching rules. Useful for resolving a correspondent name from an ID referenced by a document when it is not on the first page of list_correspondents.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "ID of the correspondent to retrieve. Document objects reference correspondents by these IDs.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "get_correspondent"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Get complete details for a specific document including full metadata, content preview, tags, correspondent, and document type information.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Unique document ID. Get this from search_documents results. Returns full document metadata, content preview, and associated tags/correspondent/type.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "get_document"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Retrieve a single document type by its ID, including its name and matching rules. Useful for resolving a document type name from an ID referenced by a document when it is not on the first page of list_document_types.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "ID of the document type to retrieve. Document objects reference document types by these IDs.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "get_document_type"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Retrieve a single tag by its ID, including its name, color, and matching rules. Useful for resolving a tag name from an ID referenced by a document when the tag is not on the first page of list_tags.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "ID of the tag to retrieve. Document objects reference tags by these IDs.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "get_tag"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Retrieve available correspondents (people, companies, organizations that send/receive documents). Returns names and automatic matching patterns for document assignment. Results are paginated (25 per page by default); use page/page_size to enumerate large correspondent collections.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "description": "1-based page number to retrieve. Paperless returns 25 results per page by default; use this together with the `next`/`count` fields in the response to enumerate all entries.",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "page_size": {
+          "description": "Number of results per page. Increase this (e.g. 1000) to fetch all entries in a single call instead of paging.",
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_correspondents"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Retrieve available document types for categorizing documents by purpose or format (Invoice, Receipt, Contract, etc.). Returns names and automatic matching rules. Results are paginated (25 per page by default); use page/page_size to enumerate large collections.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "description": "1-based page number to retrieve. Paperless returns 25 results per page by default; use this together with the `next`/`count` fields in the response to enumerate all entries.",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "page_size": {
+          "description": "Number of results per page. Increase this (e.g. 1000) to fetch all entries in a single call instead of paging.",
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_document_types"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Retrieve available tags for labeling and organizing documents. Returns tag names, colors, and matching rules for automatic assignment. Results are paginated (25 per page by default); use page/page_size to enumerate large tag collections.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "description": "1-based page number to retrieve. Paperless returns 25 results per page by default; use this together with the `next`/`count` fields in the response to enumerate all entries.",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "page_size": {
+          "description": "Number of results per page. Increase this (e.g. 1000) to fetch all entries in a single call instead of paging.",
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_tags"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Search through documents using full-text search across content, titles, tags, and metadata. Returns document metadata WITHOUT the full OCR content field to prevent token overflow. Use get_document to retrieve full details for specific documents of interest. Supports Paperless-NGX advanced query syntax.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "description": "Page number for pagination (starts at 1). Use to browse through large result sets without hitting token limits.",
+          "type": "number"
+        },
+        "page_size": {
+          "description": "Number of documents per page (default 25, max 100). Smaller page sizes help avoid token limits when many documents match.",
+          "type": "number"
+        },
+        "query": {
+          "description": "Search query using Paperless-NGX syntax. By default, matches documents containing ALL words. Advanced syntax: Field searches: 'tag:unpaid', 'type:invoice', 'correspondent:university'. Logical operators: 'term1 AND (term2 OR term3)'. Date ranges: 'created:[2020 to 2024]', 'added:yesterday', 'modified:today'. Wildcards: 'prod*name'. Combine multiple criteria as needed. Search looks through document content, title, correspondent, type, and tags.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "search_documents"
+  }
+]

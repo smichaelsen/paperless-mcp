@@ -1,194 +1,12 @@
 [
   {
-    "description": "Perform bulk operations on multiple correspondents: set permissions to control who can assign them to documents, or permanently delete multiple correspondents. Use with caution as deletion affects all associated documents.",
-    "execution": {
-      "taskSupport": "forbidden"
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
     },
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
-      "properties": {
-        "correspondent_ids": {
-          "description": "Array of correspondent IDs to perform bulk operations on. Use list_correspondents to get valid correspondent IDs.",
-          "items": {
-            "type": "number"
-          },
-          "type": "array"
-        },
-        "merge": {
-          "description": "Whether to merge with existing permissions (true) or replace them entirely (false). Default is false.",
-          "type": "boolean"
-        },
-        "operation": {
-          "description": "Bulk operation: 'set_permissions' to control who can assign these correspondents to documents, 'delete' to permanently remove correspondents from the system. Warning: Deleting correspondents will remove them from all associated documents.",
-          "enum": [
-            "set_permissions",
-            "delete"
-          ],
-          "type": "string"
-        },
-        "owner": {
-          "description": "User ID to set as owner when operation is 'set_permissions'. The owner has full control over these correspondents.",
-          "type": "number"
-        },
-        "permissions": {
-          "additionalProperties": false,
-          "description": "Permission settings when operation is 'set_permissions'. Defines who can view/assign and modify these correspondents.",
-          "properties": {
-            "change": {
-              "additionalProperties": false,
-              "description": "Users and groups with permission to edit these correspondent settings",
-              "properties": {
-                "groups": {
-                  "description": "Group IDs who can modify correspondent details",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                },
-                "users": {
-                  "description": "User IDs who can modify correspondent details (name, matching rules)",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                }
-              },
-              "type": "object"
-            },
-            "view": {
-              "additionalProperties": false,
-              "description": "Users and groups with permission to view and use these correspondents",
-              "properties": {
-                "groups": {
-                  "description": "Group IDs who can see and assign these correspondents to documents",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                },
-                "users": {
-                  "description": "User IDs who can see and assign these correspondents to documents",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                }
-              },
-              "type": "object"
-            }
-          },
-          "required": [
-            "view",
-            "change"
-          ],
-          "type": "object"
-        }
-      },
-      "required": [
-        "correspondent_ids",
-        "operation"
-      ],
-      "type": "object"
-    },
-    "name": "bulk_edit_correspondents"
-  },
-  {
-    "description": "Perform bulk operations on multiple document types: set permissions to control who can assign them to documents, or permanently delete multiple types. Use with caution as deletion affects all associated documents.",
-    "execution": {
-      "taskSupport": "forbidden"
-    },
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
-      "properties": {
-        "document_type_ids": {
-          "description": "Array of document type IDs to perform bulk operations on. Use list_document_types to get valid document type IDs.",
-          "items": {
-            "type": "number"
-          },
-          "type": "array"
-        },
-        "merge": {
-          "description": "Whether to merge with existing permissions (true) or replace them entirely (false). Default is false.",
-          "type": "boolean"
-        },
-        "operation": {
-          "description": "Bulk operation: 'set_permissions' to control who can assign these document types to documents, 'delete' to permanently remove document types from the system. Warning: Deleting document types will remove the classification from all associated documents.",
-          "enum": [
-            "set_permissions",
-            "delete"
-          ],
-          "type": "string"
-        },
-        "owner": {
-          "description": "User ID to set as owner when operation is 'set_permissions'. The owner has full control over these document types.",
-          "type": "number"
-        },
-        "permissions": {
-          "additionalProperties": false,
-          "description": "Permission settings when operation is 'set_permissions'. Defines who can view/assign and modify these document types.",
-          "properties": {
-            "change": {
-              "additionalProperties": false,
-              "description": "Users and groups with permission to edit these document type settings",
-              "properties": {
-                "groups": {
-                  "description": "Group IDs who can modify document type details",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                },
-                "users": {
-                  "description": "User IDs who can modify document type details (name, matching rules)",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                }
-              },
-              "type": "object"
-            },
-            "view": {
-              "additionalProperties": false,
-              "description": "Users and groups with permission to view and use these document types for categorization",
-              "properties": {
-                "groups": {
-                  "description": "Group IDs who can see and assign these document types to documents",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                },
-                "users": {
-                  "description": "User IDs who can see and assign these document types to documents",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                }
-              },
-              "type": "object"
-            }
-          },
-          "required": [
-            "view",
-            "change"
-          ],
-          "type": "object"
-        }
-      },
-      "required": [
-        "document_type_ids",
-        "operation"
-      ],
-      "type": "object"
-    },
-    "name": "bulk_edit_document_types"
-  },
-  {
-    "description": "Perform bulk operations on multiple documents simultaneously: set correspondent/type/tags, delete, reprocess, merge, split, rotate, or manage permissions. Efficient for managing large document collections.",
+    "description": "Perform bulk metadata operations on multiple documents simultaneously: set correspondent/type/storage path, manage tags, reprocess, rotate, merge or split. Deletion, page removal and permission changes are not available in this mode.",
     "execution": {
       "taskSupport": "forbidden"
     },
@@ -211,10 +29,6 @@
           "description": "Rotation angle in degrees when method is 'rotate'. Use 90, 180, or 270 for standard rotations.",
           "type": "number"
         },
-        "delete_originals": {
-          "description": "Whether to delete original documents after merge/split operations. Use with caution.",
-          "type": "boolean"
-        },
         "document_type": {
           "description": "ID of document type to assign when method is 'set_document_type'. Use list_document_types to get valid IDs.",
           "type": "number"
@@ -231,7 +45,7 @@
           "type": "number"
         },
         "method": {
-          "description": "The bulk operation to perform: set_correspondent (assign sender/receiver), set_document_type (categorize documents), set_storage_path (organize file location), add_tag/remove_tag/modify_tags (manage labels), delete (permanently remove), reprocess (re-run OCR/indexing), set_permissions (control access), merge (combine documents), split (separate into multiple), rotate (adjust orientation), delete_pages (remove specific pages)",
+          "description": "The bulk operation to perform: set_correspondent (assign sender/receiver), set_document_type (categorize documents), set_storage_path (organize file location), add_tag/remove_tag/modify_tags (manage labels), reprocess (re-run OCR/indexing), merge (combine documents into a new one, keeping the originals), split (separate into multiple documents, keeping the original), rotate (adjust orientation). Deleting documents or pages and replacing permissions are not available: this server was not started with destructive operations enabled.",
           "enum": [
             "set_correspondent",
             "set_document_type",
@@ -239,98 +53,12 @@
             "add_tag",
             "remove_tag",
             "modify_tags",
-            "delete",
             "reprocess",
-            "set_permissions",
             "merge",
             "split",
-            "rotate",
-            "delete_pages"
+            "rotate"
           ],
           "type": "string"
-        },
-        "pages": {
-          "description": "Page specification for delete_pages method. Format: '1,3,5-7' to delete pages 1, 3, and 5 through 7.",
-          "type": "string"
-        },
-        "permissions": {
-          "additionalProperties": false,
-          "description": "Permission settings when method is 'set_permissions'. Controls who can view and edit the documents.",
-          "properties": {
-            "merge": {
-              "description": "Whether to merge with existing permissions (true) or replace them (false)",
-              "type": "boolean"
-            },
-            "owner": {
-              "description": "User ID to set as document owner, or null to remove ownership",
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "set_permissions": {
-              "additionalProperties": false,
-              "description": "Specific permission settings for users and groups",
-              "properties": {
-                "change": {
-                  "additionalProperties": false,
-                  "description": "Users and groups who can edit these documents",
-                  "properties": {
-                    "groups": {
-                      "description": "Group IDs granted edit permission",
-                      "items": {
-                        "type": "number"
-                      },
-                      "type": "array"
-                    },
-                    "users": {
-                      "description": "User IDs granted edit permission",
-                      "items": {
-                        "type": "number"
-                      },
-                      "type": "array"
-                    }
-                  },
-                  "required": [
-                    "users",
-                    "groups"
-                  ],
-                  "type": "object"
-                },
-                "view": {
-                  "additionalProperties": false,
-                  "description": "Users and groups who can view these documents",
-                  "properties": {
-                    "groups": {
-                      "description": "Group IDs granted view permission",
-                      "items": {
-                        "type": "number"
-                      },
-                      "type": "array"
-                    },
-                    "users": {
-                      "description": "User IDs granted view permission",
-                      "items": {
-                        "type": "number"
-                      },
-                      "type": "array"
-                    }
-                  },
-                  "required": [
-                    "users",
-                    "groups"
-                  ],
-                  "type": "object"
-                }
-              },
-              "required": [
-                "view",
-                "change"
-              ],
-              "type": "object"
-            }
-          },
-          "type": "object"
         },
         "remove_tags": {
           "description": "Array of tag IDs to remove when method is 'modify_tags'. Use list_tags to get valid IDs.",
@@ -357,100 +85,12 @@
     "name": "bulk_edit_documents"
   },
   {
-    "description": "Perform bulk operations on multiple tags: set permissions to control access or permanently delete multiple tags at once. Efficient for managing large tag collections.",
-    "execution": {
-      "taskSupport": "forbidden"
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
     },
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
-      "properties": {
-        "merge": {
-          "description": "Whether to merge with existing permissions (true) or replace them entirely (false). Default is false.",
-          "type": "boolean"
-        },
-        "operation": {
-          "description": "Bulk operation: 'set_permissions' to control who can use these tags, 'delete' to permanently remove all specified tags from the system.",
-          "enum": [
-            "set_permissions",
-            "delete"
-          ],
-          "type": "string"
-        },
-        "owner": {
-          "description": "User ID to set as owner when operation is 'set_permissions'. Owner has full control over the tags.",
-          "type": "number"
-        },
-        "permissions": {
-          "additionalProperties": false,
-          "description": "Permission settings when operation is 'set_permissions'. Defines who can view/use and modify these tags.",
-          "properties": {
-            "change": {
-              "additionalProperties": false,
-              "description": "Users and groups with edit permissions for these tags",
-              "properties": {
-                "groups": {
-                  "description": "Group IDs who can modify these tags",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                },
-                "users": {
-                  "description": "User IDs who can modify these tags (name, color, matching rules)",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                }
-              },
-              "type": "object"
-            },
-            "view": {
-              "additionalProperties": false,
-              "description": "Users and groups with view/use permissions for these tags",
-              "properties": {
-                "groups": {
-                  "description": "Group IDs who can see and use these tags",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                },
-                "users": {
-                  "description": "User IDs who can see and use these tags",
-                  "items": {
-                    "type": "number"
-                  },
-                  "type": "array"
-                }
-              },
-              "type": "object"
-            }
-          },
-          "required": [
-            "view",
-            "change"
-          ],
-          "type": "object"
-        },
-        "tag_ids": {
-          "description": "Array of tag IDs to perform bulk operations on. Use list_tags to get valid tag IDs.",
-          "items": {
-            "type": "number"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "tag_ids",
-        "operation"
-      ],
-      "type": "object"
-    },
-    "name": "bulk_edit_tags"
-  },
-  {
     "description": "Create a new correspondent (person, company, or organization) for tracking document senders and receivers. Can include automatic matching patterns for smart assignment to incoming documents.",
     "execution": {
       "taskSupport": "forbidden"
@@ -487,6 +127,12 @@
     "name": "create_correspondent"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
     "description": "Create a new document type for categorizing documents by their purpose or format (e.g., Invoice, Receipt, Contract). Can include automatic matching rules for smart classification.",
     "execution": {
       "taskSupport": "forbidden"
@@ -523,6 +169,12 @@
     "name": "create_document_type"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
     "description": "Create a new tag for labeling and organizing documents. Tags can have colors for visual identification and automatic matching rules for smart assignment.",
     "execution": {
       "taskSupport": "forbidden"
@@ -559,27 +211,12 @@
     "name": "create_tag"
   },
   {
-    "description": "Permanently delete a tag from the system. This removes the tag from all documents that currently use it. Use with caution as this action cannot be undone.",
-    "execution": {
-      "taskSupport": "forbidden"
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
     },
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "description": "ID of the tag to permanently delete. This will remove the tag from all documents that currently use it. Use list_tags to find tag IDs.",
-          "type": "number"
-        }
-      },
-      "required": [
-        "id"
-      ],
-      "type": "object"
-    },
-    "name": "delete_tag"
-  },
-  {
     "description": "Download a document file as base64-encoded data. Choose between original uploaded file or processed/archived version with OCR improvements.",
     "execution": {
       "taskSupport": "forbidden"
@@ -605,6 +242,12 @@
     "name": "download_document"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Retrieve a single correspondent by its ID, including its name and matching rules. Useful for resolving a correspondent name from an ID referenced by a document when it is not on the first page of list_correspondents.",
     "execution": {
       "taskSupport": "forbidden"
@@ -626,6 +269,12 @@
     "name": "get_correspondent"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Get complete details for a specific document including full metadata, content preview, tags, correspondent, and document type information.",
     "execution": {
       "taskSupport": "forbidden"
@@ -647,6 +296,12 @@
     "name": "get_document"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Retrieve a single document type by its ID, including its name and matching rules. Useful for resolving a document type name from an ID referenced by a document when it is not on the first page of list_document_types.",
     "execution": {
       "taskSupport": "forbidden"
@@ -668,6 +323,12 @@
     "name": "get_document_type"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Retrieve a single tag by its ID, including its name, color, and matching rules. Useful for resolving a tag name from an ID referenced by a document when the tag is not on the first page of list_tags.",
     "execution": {
       "taskSupport": "forbidden"
@@ -689,6 +350,12 @@
     "name": "get_tag"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Retrieve available correspondents (people, companies, organizations that send/receive documents). Returns names and automatic matching patterns for document assignment. Results are paginated (25 per page by default); use page/page_size to enumerate large correspondent collections.",
     "execution": {
       "taskSupport": "forbidden"
@@ -715,6 +382,12 @@
     "name": "list_correspondents"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Retrieve available document types for categorizing documents by purpose or format (Invoice, Receipt, Contract, etc.). Returns names and automatic matching rules. Results are paginated (25 per page by default); use page/page_size to enumerate large collections.",
     "execution": {
       "taskSupport": "forbidden"
@@ -741,6 +414,12 @@
     "name": "list_document_types"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Retrieve available tags for labeling and organizing documents. Returns tag names, colors, and matching rules for automatic assignment. Results are paginated (25 per page by default); use page/page_size to enumerate large tag collections.",
     "execution": {
       "taskSupport": "forbidden"
@@ -767,6 +446,12 @@
     "name": "list_tags"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
     "description": "Upload a new document to Paperless-NGX with metadata. Supports PDF, images (PNG/JPG/TIFF), and text files. Automatically processes for OCR and indexing.",
     "execution": {
       "taskSupport": "forbidden"
@@ -831,6 +516,12 @@
     "name": "post_document"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Search through documents using full-text search across content, titles, tags, and metadata. Returns document metadata WITHOUT the full OCR content field to prevent token overflow. Use get_document to retrieve full details for specific documents of interest. Supports Paperless-NGX advanced query syntax.",
     "execution": {
       "taskSupport": "forbidden"
@@ -860,6 +551,12 @@
     "name": "search_documents"
   },
   {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
     "description": "Update metadata for an existing document. Use this to correct or set the document date, title, correspondent, document type, tags, and other fields on a document that is already in Paperless-NGX.",
     "execution": {
       "taskSupport": "forbidden"
@@ -924,6 +621,12 @@
     "name": "update_document"
   },
   {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
     "description": "Modify an existing tag's name, color, or automatic matching rules. Useful for refining tag organization and improving automatic document classification.",
     "execution": {
       "taskSupport": "forbidden"
