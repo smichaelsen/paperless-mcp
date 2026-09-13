@@ -66,12 +66,6 @@ before cutting one — the workflow cannot do it for you.
    the build and audits production dependencies — on Node 22 and 24 — before it
    publishes anything.
 5. Verify: `npm view @smic/paperless-mcp version`.
-6. **After the first release only:** the Installation section of `README.md`
-   opens with an admonition telling the reader to check whether the package
-   exists on npm at all, because at the time of writing it did not. Once
-   step 5 answers with a version, that check is noise — delete the admonition
-   and leave the install commands. Nothing else in the README depends on the
-   package being unpublished.
 
 ## What gets published
 
