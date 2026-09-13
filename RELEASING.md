@@ -1,6 +1,6 @@
 # Releasing
 
-`@smichaelsen/paperless-mcp` is published to the public npm registry by
+`@smic/paperless-mcp` is published to the public npm registry by
 `.github/workflows/npm-publish.yml`, which runs **only** when a GitHub release is
 **published**. Pushing a tag on its own publishes nothing; neither does a push to
 `main`; neither does saving a release as a draft. Publishing the release is the
@@ -18,7 +18,7 @@ Nothing has ever been published, so the first release also needs this. Check it
 before cutting one — the workflow cannot do it for you.
 
 1. **`NPM_TOKEN` repository secret.** An npm **automation** token for an account
-   that may publish under the `@smichaelsen` scope. Automation tokens bypass the
+   that may publish under the `@smic` scope. Automation tokens bypass the
    2FA prompt, which is what makes an unattended publish possible; a
    publish-scoped granular access token works too. Add it under
    *Settings → Secrets and variables → Actions → New repository secret*, named
@@ -57,7 +57,7 @@ before cutting one — the workflow cannot do it for you.
 
    > **The first release must not be a pre-release.** A pre-release publishes
    > to `next` and leaves the package with no `latest` dist-tag at all, so
-   > `npm install -g @smichaelsen/paperless-mcp` and the `npx` snippets — both
+   > `npm install -g @smic/paperless-mcp` and the `npx` snippets — both
    > documented in the README — would resolve to nothing. That is the very
    > defect this whole process exists to fix. Pre-releases are only safe once a
    > `latest` exists for them to sit beside.
@@ -65,7 +65,7 @@ before cutting one — the workflow cannot do it for you.
    type-checks, runs the unit tests, builds, verifies the bin shebang survived
    the build and audits production dependencies — on Node 22 and 24 — before it
    publishes anything.
-5. Verify: `npm view @smichaelsen/paperless-mcp version`.
+5. Verify: `npm view @smic/paperless-mcp version`.
 6. **After the first release only:** the Installation section of `README.md`
    opens with an admonition telling the reader to check whether the package
    exists on npm at all, because at the time of writing it did not. Once
@@ -103,8 +103,8 @@ the tarball into a throwaway prefix:
 
 ```bash
 npm pack --pack-destination /tmp
-npm i -g --prefix /tmp/pm-check /tmp/smichaelsen-paperless-mcp-*.tgz
-ls -l /tmp/pm-check/lib/node_modules/@smichaelsen/paperless-mcp/build/index.js  # -rwxr-xr-x
+npm i -g --prefix /tmp/pm-check /tmp/smic-paperless-mcp-*.tgz
+ls -l /tmp/pm-check/lib/node_modules/@smic/paperless-mcp/build/index.js  # -rwxr-xr-x
 /tmp/pm-check/bin/paperless-mcp                                                # prints usage
 ```
 

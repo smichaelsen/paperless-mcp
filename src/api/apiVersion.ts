@@ -140,7 +140,7 @@ export function buildApiVersionError(
       `${instance} has dropped API version ${REQUESTED_API_VERSION} and now offers version ${serverApiVersion}.`
     );
     parts.push(
-      `Upgrade @smichaelsen/paperless-mcp to a release that requests API version ${serverApiVersion}, or run a Paperless-ngx release that still accepts version ${REQUESTED_API_VERSION} (verified up to ${MAX_VERIFIED_PAPERLESS_VERSION}).`
+      `Upgrade @smic/paperless-mcp to a release that requests API version ${serverApiVersion}, or run a Paperless-ngx release that still accepts version ${REQUESTED_API_VERSION} (verified up to ${MAX_VERIFIED_PAPERLESS_VERSION}).`
     );
   }
 
