@@ -1,7 +1,7 @@
 # paperless-mcp — working conventions
 
 MCP server exposing the Paperless-ngx REST API. Hard fork of `nloui/paperless-mcp`,
-published as `@smichaelsen/paperless-mcp`. No upstream PRs.
+published as `@smic/paperless-mcp`. No upstream PRs.
 
 ## Layout
 

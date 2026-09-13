@@ -75,7 +75,7 @@ is released.
 > **Check that the package is on npm before you install it:**
 >
 > ```bash
-> npm view @smichaelsen/paperless-mcp version
+> npm view @smic/paperless-mcp version
 > ```
 >
 > An `E404` means no release has been cut yet and `npm install` cannot work; use
@@ -91,7 +91,7 @@ is released.
 
 1. Install the MCP server:
 ```bash
-npm install -g @smichaelsen/paperless-mcp
+npm install -g @smic/paperless-mcp
 ```
 
 2. Add it to your Claude's MCP configuration:
@@ -102,7 +102,7 @@ For VSCode extension, edit `~/Library/Application Support/Code/User/globalStorag
   "mcpServers": {
     "paperless": {
       "command": "npx",
-      "args": ["-y", "@smichaelsen/paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
+      "args": ["-y", "@smic/paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
     }
   }
 }
@@ -114,7 +114,7 @@ For Claude desktop app, edit `~/Library/Application Support/Claude/claude_deskto
   "mcpServers": {
     "paperless": {
       "command": "npx",
-      "args": ["-y", "@smichaelsen/paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
+      "args": ["-y", "@smic/paperless-mcp", "http://your-paperless-instance:8000", "your-api-token"]
     }
   }
 }

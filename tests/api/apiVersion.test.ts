@@ -100,7 +100,7 @@ describe("buildApiVersionError", () => {
     expect(error.message).toContain(`API version ${REQUESTED_API_VERSION}`);
     expect(error.message).toContain("Paperless-ngx 4.0.0");
     expect(error.message).toContain("has dropped API version 9");
-    expect(error.message).toContain("Upgrade @smichaelsen/paperless-mcp");
+    expect(error.message).toContain("Upgrade @smic/paperless-mcp");
     expect(error.message).toContain(MAX_VERIFIED_PAPERLESS_VERSION);
   });
 

@@ -142,7 +142,7 @@ describe("PaperlessAPI.request — unsupported API version", () => {
     );
 
     await expect(api().getTags()).rejects.toThrow(
-      /refused API version 9 .*Paperless-ngx 4\.0\.0.*Upgrade @smichaelsen\/paperless-mcp/s
+      /refused API version 9 .*Paperless-ngx 4\.0\.0.*Upgrade @smic\/paperless-mcp/s
     );
   });
 
@@ -175,7 +175,7 @@ describe("PaperlessAPI.request — unsupported API version", () => {
     expect(logged).not.toContain(TOKEN);
     // The actionable message belongs in the thrown error, not in the log; the
     // log carries the structured facts only.
-    expect(logged).not.toContain("Upgrade @smichaelsen/paperless-mcp");
+    expect(logged).not.toContain("Upgrade @smic/paperless-mcp");
     expect(logged).toContain("paperless_api_version_unsupported");
     expect(logged).toContain('"requested_api_version\\":9');
     expect(logged).toContain('"server_api_version\\":12');

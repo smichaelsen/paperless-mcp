@@ -1,4 +1,4 @@
-# Publishes @smichaelsen/paperless-mcp to the public npm registry when a GitHub
+# Publishes @smic/paperless-mcp to the public npm registry when a GitHub
 # release is published. Nothing else triggers it: no push, no tag on its own,
 # no draft.
 #
@@ -116,7 +116,7 @@ jobs:
           fi
 
       - name: Publish
-        # --access public: the package name is scoped (@smichaelsen/...), and
+        # --access public: the package name is scoped (@smic/...), and
         #   scoped packages default to a restricted (paid, private) publish.
         #   Without this flag the very first publish fails with E402.
         # --provenance: publishes a signed build-provenance attestation, so
