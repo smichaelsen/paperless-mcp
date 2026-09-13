@@ -103,8 +103,8 @@ positional arguments are ignored.
 | `PAPERLESS_MCP_ALLOW_UNAUTHENTICATED` | `--http` only. Explicitly start **without** authentication. Refused unless the bind address is loopback. |
 | `PAPERLESS_MCP_BIND_ADDRESS` | `--http` only. Interface the listener binds to. Default `127.0.0.1` — loopback only. |
 | `PAPERLESS_MCP_ENABLE_LEGACY_SSE` | `--http` only. Register the deprecated `GET /sse` + `POST /messages` routes. Off by default. |
-| `PAPERLESS_MCP_MAX_BODY` | `--http` only. Largest accepted JSON body, e.g. `10mb` (the default) or `512kb`. |
-| `PAPERLESS_MCP_RATE_LIMIT_MAX` | `--http` only. Requests per window per client address. Default `600`; `0` disables rate limiting. |
+| `PAPERLESS_MCP_MAX_BODY` | `--http` only. Largest accepted JSON body, e.g. `10mb` (the default) or `512kb`. This is also the upload ceiling: `post_document` carries the file base64-encoded *inside* the JSON-RPC body, so `10mb` is about 7.5 MB of actual file. |
+| `PAPERLESS_MCP_RATE_LIMIT_MAX` | `--http` only. Requests per window per client address. Default `600`; `0` disables rate limiting. Behind a reverse proxy every request shares the proxy's address, so the limit becomes one global bucket and one noisy client `429`s everyone — including a caller holding the correct secret. Rate-limit at the proxy instead and raise or disable this. |
 | `PAPERLESS_MCP_RATE_LIMIT_WINDOW_MS` | `--http` only. Rate-limit window in milliseconds. Default `60000`. |
 | `PAPERLESS_MCP_ALLOWED_HOSTS` | `--http` only. Comma-separated hostnames accepted in the `Host` header (ports ignored). **Replaces** the default `localhost,127.0.0.1,[::1]` rather than extending it. `*` disables the check. |
 | `PAPERLESS_MCP_ALLOWED_ORIGINS` | `--http` only. Comma-separated origins accepted in the `Origin` header. Default: none — a request carrying *any* `Origin` is rejected, while requests without one (every non-browser MCP client) pass. `*` disables the check. |
@@ -233,17 +233,21 @@ client reads from `tools/list`. This is the map.
 | `create_document_type` | write | `name`, optional `match`, `matching_algorithm`. |
 | `bulk_edit_document_types` | destructive | `set_permissions` or `delete` across many document types. |
 
-`matching_algorithm` is one of `any`, `all`, `exact`, `regular expression`, `fuzzy`
-wherever it appears.
+`matching_algorithm` takes **two different forms**, and they are not
+interchangeable. `create_correspondent` and `create_document_type` take the string
+enum `any` | `all` | `exact` | `regular expression` | `fuzzy`. `create_tag` and
+`update_tag` take the equivalent **integer** instead: `0`=any, `1`=all, `2`=exact,
+`3`=regular expression, `4`=fuzzy. Passing a string to a tag tool is a validation
+error, and vice versa.
 
 `readOnlyHint` is true for the read class only; `openWorldHint` is false throughout,
 since every tool talks to exactly one configured instance. `destructiveHint` is true
 for anything that overwrites rather than adds — including `update_document` and
 `update_tag`, because `tags` replaces the whole list and the nullable relations clear
-a field outright, and both `bulk_edit_*` object operations, since `delete` removes
-objects and `set_permissions` with `merge: false` replaces the permission set.
-`post_document`, `create_*` and `bulk_edit_documents` are not idempotent; everything
-else is.
+a field outright, and every `bulk_edit_*` object tool, because both of its operations
+qualify: `delete` removes objects, and `set_permissions` with `merge: false` replaces
+the permission set. `post_document`, `create_*` and `bulk_edit_documents` are not
+idempotent; everything else is.
 
 The server reports a clear error when the URL or token is wrong, when Paperless is
 unreachable, when an operation fails, when parameters are invalid, and when the
