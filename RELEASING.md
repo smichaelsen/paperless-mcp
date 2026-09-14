@@ -17,13 +17,35 @@ single deliberate act that publishes the package.
 Nothing has ever been published, so the first release also needs this. Check it
 before cutting one — the workflow cannot do it for you.
 
-1. **`NPM_TOKEN` repository secret.** An npm **automation** token for an account
-   that may publish under the `@smic` scope. Automation tokens bypass the
-   2FA prompt, which is what makes an unattended publish possible; a
-   publish-scoped granular access token works too. Add it under
-   *Settings → Secrets and variables → Actions → New repository secret*, named
-   exactly `NPM_TOKEN`.
-   Never paste a token into a file in this repository.
+1. **`NPM_TOKEN` repository secret**, for an account that may publish under the
+   `@smic` scope. Add it under *Settings → Secrets and variables → Actions → New
+   repository secret*, named exactly `NPM_TOKEN`. Never paste a token into a file
+   in this repository.
+
+   A **granular access token** needs **both** of these, and neither is the
+   default:
+
+   - permission **Read and write (publish and stage)** — *not* "stage only",
+     which cannot create a version at all; and
+   - **bypass 2FA enabled** — npm refuses an unattended publish otherwise.
+
+   Both were established the hard way on the 0.1.0 release. The failure modes are
+   worth recognising, because the first one does not say what it means:
+
+   | Token | Result |
+   | --- | --- |
+   | Stage only | `E404 Not Found - PUT .../@smic%2fpaperless-mcp` |
+   | Publish and stage, no bypass | `E403 ... Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages.` |
+   | Publish and stage, bypass enabled | publishes |
+
+   **That `E404` is an authorization failure, not a missing package.** npm answers
+   404 rather than 403 on an unauthorized write so it does not leak whether a
+   package exists — so a token problem reads exactly like a typo in the package
+   name. If a publish 404s, suspect the token before the name.
+
+   A classic **automation** token also bypasses the 2FA prompt and works, but npm
+   is steering towards granular tokens, and #40 tracks replacing the stored token
+   with Trusted Publishing (OIDC) so there is no long-lived credential at all.
 2. **The scope must exist on npm** and the account must be a member of it.
 3. That is all. `--access public` is already in the workflow: scoped packages
    default to a restricted publish, and without that flag the first publish of a
