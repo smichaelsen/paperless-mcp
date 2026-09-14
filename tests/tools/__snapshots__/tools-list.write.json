@@ -595,7 +595,7 @@
           ]
         },
         "id": {
-          "description": "Unique document ID to update. Get this from list_documents, search_documents, or get_document.",
+          "description": "Unique document ID to update. Get this from search_documents or get_document.",
           "type": "number"
         },
         "storage_path": {
