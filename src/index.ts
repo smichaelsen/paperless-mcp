@@ -46,7 +46,7 @@ if (portIndex !== -1 && args[portIndex + 1]) {
  * RELEASING.md. `tests/serverInfo.test.ts` fails if the two ever disagree.
  */
 const SERVER_NAME = "paperless-ngx";
-const SERVER_VERSION = "0.1.0";
+const SERVER_VERSION = "0.1.1";
 
 async function main() {
   installProcessErrorHandlers();
