@@ -15,16 +15,23 @@ Two things to know before wiring it up:
 
 | | Supported |
 | --- | --- |
-| Paperless-ngx | **2.16.0 – 3.1.x** (verified against 3.1.3) |
+| Paperless-ngx | **2.16.0 – 3.1.x** (both ends exercised in CI against live instances) |
 | Paperless-ngx REST API | version **9** |
 | Node.js | 22 LTS and 24 LTS |
 
 The client asks for REST API version 9 with an `Accept: application/json; version=9`
 header. Version 9 arrived in Paperless-ngx 2.16.0 and is still accepted by 3.1.x;
 instances at 2.15.x or older answer `406 Not Acceptable`. That becomes an explicit
-error naming the API version the instance offers (from its `X-Api-Version` header)
-and what to upgrade — the upstream response body is never read, logged or forwarded
-into a tool result.
+error naming what to upgrade — the upstream response body is never read, logged or
+forwarded into a tool result.
+
+Both ends of that range are booted and tested on every pull request, not asserted
+against a mock (see [Integration tests](#integration-tests-against-a-real-paperless-ngx)).
+Measured there: 2.16.0 reports `X-Api-Version: 9` and refuses version 10; 3.1.3
+reports `X-Api-Version: 10` and still serves version 9. Note that a `406` carries
+neither `X-Api-Version` nor `X-Version` — Paperless fails content negotiation before
+it stamps those headers — so the error can say that the version was refused but not
+which version the instance would have offered.
 
 ## Quick Start
 
@@ -489,11 +496,32 @@ official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript
 and [zod](https://github.com/colinhacks/zod), over the
 [Paperless-NGX REST API](https://docs.paperless-ngx.com/api/).
 
+### Integration tests against a real Paperless-ngx
+
 The tests in `tests/integration/` run against a real Paperless-ngx instance and are
-**opt-in**: without `PAPERLESS_TEST_URL` they skip themselves, so they are not part
-of the CI gate. Point them at a **disposable** instance — a throwaway container, not
-your production archive — even though they only ever create their own fixtures, named
-`mcp-it-<random>-…` and removed again in the cleanup hook, including on failure.
+**opt-in**: without `PAPERLESS_TEST_URL` they skip themselves, so `npm test` on a
+laptop stays hermetic. They only ever create their own fixtures, named
+`mcp-it-<random>-…`, and remove them again in the cleanup hook, including on failure —
+but point them at a **disposable** instance anyway, not your production archive.
+
+The easiest way to get one is the disposable stack this repository ships. It is the
+same stack CI uses, so a green run locally and a green run in CI mean the same thing:
+
+```bash
+PAPERLESS_IT_VERSION=3.1.3 ./scripts/integration-stack.sh up
+eval "$(./scripts/integration-stack.sh env)"   # PAPERLESS_TEST_URL / _TOKEN / _UPLOAD
+npm run test:integration
+./scripts/integration-stack.sh down
+```
+
+`up` boots Redis and Paperless-ngx (SQLite, no volumes — see
+`compose.integration.yaml`), creates a superuser with a password it generates for that
+run, waits for the API *and* the Celery worker to be genuinely ready, and writes the
+credentials to the gitignored `.paperless-it.env`. It takes about half a minute once
+the images are pulled, and fails with the container logs rather than hanging if
+Paperless does not come up.
+
+To run against an instance you already have, set the variables yourself:
 
 ```bash
 PAPERLESS_TEST_URL=http://localhost:8000 \
@@ -501,9 +529,14 @@ PAPERLESS_TEST_TOKEN=your-api-token \
 npm run test:integration
 ```
 
-`PAPERLESS_TEST_TOKEN` is required once the URL is set;
-`PAPERLESS_TEST_UPLOAD=1` additionally runs the upload/consume test, which needs a
-running consumer and takes up to two minutes.
+`PAPERLESS_TEST_TOKEN` is required once the URL is set. `PAPERLESS_TEST_UPLOAD=1`
+additionally runs the upload/consume workflow, which needs a running consumer and
+puts documents into the instance — which is why it stays off unless asked for.
+
+`.github/workflows/integration.yml` runs this suite on every pull request and push to
+`main` against both ends of the supported range (2.16.0 and 3.1.3), and weekly against
+whatever the newest upstream release is by then. That weekly job is what notices a new
+Paperless-ngx breaking this client; it is deliberately not a pull-request gate.
 
 ## License and attribution
 

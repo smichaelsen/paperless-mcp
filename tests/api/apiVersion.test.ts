@@ -122,7 +122,12 @@ describe("buildApiVersionError", () => {
     expect(error.serverVersion).toBeNull();
     expect(error.message).toContain("no X-Api-Version header");
     expect(error.message).toContain(MIN_SUPPORTED_PAPERLESS_VERSION);
-    expect(error.message).toContain("API token is valid");
+    // The advice has to point at the instance version, because that is the
+    // only thing this can be. The live suite confirms a 406 never carries the
+    // version headers, so this branch is the normal case rather than an
+    // unlucky one, and it must not send anyone off to check their token.
+    expect(error.message).toContain("a refusal never carries it");
+    expect(error.message).not.toContain("API token");
   });
 
   it("never interpolates a server version that is not a plain version token", () => {

@@ -1,0 +1,144 @@
+name: Live Paperless integration
+
+# Runs tests/integration/ against a real, disposable Paperless-ngx.
+#
+# Why this is a separate workflow rather than a job in ci.yml: ci.yml is the
+# quality gate, it takes about two minutes, and nothing here may slow it down.
+# Keeping the live lane out of that file means the gate's jobs are byte for
+# byte the ones they were, and the live legs run beside them rather than after
+# them.
+#
+# Where it runs, and why:
+#
+#   * every pull request and every push to main. Booting Paperless costs a few
+#     minutes, which is a real tax, and it is worth paying: this is the only
+#     lane that can catch a wrong query parameter or a withdrawn endpoint, and
+#     that class of bug is *silent* — the client gets a 200 and a plausible
+#     page of the wrong documents, so no unit test, type check or review will
+#     find it. There is deliberately no paths filter: a required check that
+#     skips itself on some diffs is worse than one that always runs.
+#   * weekly, and on demand. The pinned matrix below only moves when someone
+#     edits this file, so on its own it can never notice that a *new*
+#     Paperless-ngx broke us. The scheduled `drift` job resolves the newest
+#     upstream release at run time and is the thing that does.
+#
+# The drift job is intentionally not a pull-request gate: an upstream release
+# that breaks this client is worth an alert, never a red tick on somebody
+# else's unrelated PR.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays, 04:17 UTC. Off the hour, because everything is on the hour.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    # The two ends of the range README.md claims to support. If either end
+    # stops passing, the honest fix is to change the code or change the README,
+    # not to drop the failing leg from this list.
+    name: Paperless-ngx ${{ matrix.paperless }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        paperless: ["2.16.0", "3.1.3"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start a disposable Paperless-ngx
+        env:
+          PAPERLESS_IT_VERSION: ${{ matrix.paperless }}
+        # The script generates its own throwaway admin password and obtains an
+        # API token, then exports PAPERLESS_TEST_URL/_TOKEN through GITHUB_ENV
+        # with the token masked. No repository secret is involved, because
+        # nothing here outlives the job.
+        run: ./scripts/integration-stack.sh up
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Paperless logs
+        if: failure()
+        run: ./scripts/integration-stack.sh logs --tail 300 paperless
+
+      - name: Tear down
+        if: always()
+        run: ./scripts/integration-stack.sh down
+
+  drift:
+    # Not a PR gate — see the header. This is the alarm for "upstream shipped a
+    # release that breaks us", which by definition arrives without a commit
+    # here for a pull-request lane to hang off.
+    name: Newest upstream release
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Resolve the newest Paperless-ngx release
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The newest *release* rather than the `latest` image tag: a tag is
+        # mutable and gives no way to say in the log which version failed.
+        # Pre-releases are excluded — a beta breaking us is not news.
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/paperless-ngx/paperless-ngx/releases/latest --jq '.tag_name')"
+          version="${tag#v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Could not parse a version out of upstream release tag '${tag}'"
+            exit 1
+          fi
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+          echo "Newest upstream Paperless-ngx release: ${version}"
+
+      - name: Start a disposable Paperless-ngx
+        env:
+          PAPERLESS_IT_VERSION: ${{ steps.resolve.outputs.version }}
+        run: ./scripts/integration-stack.sh up
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Report what to do about a failure
+        if: failure()
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        # A red drift run means one of two things, and saying which saves the
+        # next person the investigation.
+        run: |
+          echo "::warning::The integration suite failed against Paperless-ngx ${VERSION}, which is newer than anything in the pinned matrix."
+          echo "Either this client needs to change, or README.md's supported range needs its upper bound corrected. Do not widen the range without a passing run."
+          ./scripts/integration-stack.sh logs --tail 300 paperless
+
+      - name: Tear down
+        if: always()
+        run: ./scripts/integration-stack.sh down

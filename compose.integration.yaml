@@ -1,0 +1,90 @@
+# Disposable Paperless-ngx for the integration test lane.
+#
+# This is NOT a deployment example — see compose.example.yaml for that. It is a
+# throwaway instance that exists for the length of one test run, and every
+# choice here is made for speed and determinism rather than for durability:
+#
+#   * SQLite, not PostgreSQL. Paperless defaults to SQLite (PAPERLESS_DBENGINE
+#     defaults to `sqlite`), it needs no second container to become healthy, and
+#     the suite's load — a few dozen rows — makes the database engine
+#     irrelevant to what is being tested. Postgres would add a container, a
+#     readiness dependency and ~20s of boot to prove nothing extra.
+#   * Redis is not optional. Paperless runs its consumer through Celery and
+#     refuses to start without a broker, so it is the one dependency that
+#     cannot be dropped.
+#   * No volumes. The whole point is that `docker compose down` leaves nothing
+#     behind. State lives in the container's writable layer and dies with it.
+#   * Every periodic task is disabled. A scheduled index rebuild, trash
+#     emptying or classifier training firing mid-suite is exactly the kind of
+#     thing that turns a live test flaky, and none of them are under test.
+#
+# Usage (the CI workflow and a laptop run the identical path):
+#
+#   PAPERLESS_IT_VERSION=3.1.3 ./scripts/integration-stack.sh up
+#   ./scripts/integration-stack.sh down
+#
+# PAPERLESS_IT_ADMIN_PASSWORD has deliberately no default, so no credential is
+# committed here and `docker compose up` on this file alone fails loudly rather
+# than standing up an instance with a guessable admin account. The script
+# generates a random one per run and exports it.
+
+name: paperless-mcp-it
+
+services:
+  broker:
+    image: docker.io/library/redis:7
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:${PAPERLESS_IT_VERSION:?set PAPERLESS_IT_VERSION to the Paperless-ngx tag under test}
+    restart: "no"
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      # Bound to loopback: a test instance with a known-weak admin account has
+      # no business being reachable from the network.
+      - "127.0.0.1:${PAPERLESS_IT_PORT:-8000}:8000"
+    environment:
+      PAPERLESS_REDIS: redis://broker:6379
+      # PAPERLESS_DBENGINE is left at its `sqlite` default on purpose.
+      PAPERLESS_SECRET_KEY: integration-test-not-a-secret
+      PAPERLESS_URL: http://localhost:${PAPERLESS_IT_PORT:-8000}
+      PAPERLESS_TIME_ZONE: UTC
+      PAPERLESS_OCR_LANGUAGE: eng
+
+      # Creates the superuser on first start, so no interactive
+      # `createsuperuser` is needed. Documented under PAPERLESS_ADMIN_USER.
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_IT_ADMIN_USER:-mcp-it-admin}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_IT_ADMIN_PASSWORD:?set PAPERLESS_IT_ADMIN_PASSWORD; the stack must never ship a default password}
+      PAPERLESS_ADMIN_MAIL: mcp-it-admin@example.invalid
+
+      # One of everything. A CI runner has two cores; more workers only make
+      # the boot slower and the memory ceiling closer.
+      PAPERLESS_WEBSERVER_WORKERS: "1"
+      PAPERLESS_TASK_WORKERS: "1"
+      PAPERLESS_THREADS_PER_WORKER: "1"
+
+      # Determinism: nothing may run on a timer while the suite is asserting.
+      PAPERLESS_EMAIL_TASK_CRON: disable
+      PAPERLESS_TRAIN_TASK_CRON: disable
+      PAPERLESS_INDEX_TASK_CRON: disable
+      PAPERLESS_SANITY_TASK_CRON: disable
+      PAPERLESS_WORKFLOW_SCHEDULED_TASK_CRON: disable
+      PAPERLESS_EMPTY_TRASH_TASK_CRON: disable
+    healthcheck:
+      # The image ships curl and the official compose file probes exactly this.
+      # It goes green once gunicorn serves, which the entrypoint only reaches
+      # after migrations have run. Celery readiness is checked separately by
+      # scripts/integration-stack.sh, which polls /api/status/.
+      test: ["CMD", "curl", "-fs", "-S", "--max-time", "2", "http://localhost:8000"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s

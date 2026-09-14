@@ -39,3 +39,6 @@ Thumbs.db
 
 # Isolated worktrees used by background agents
 .claude/worktrees/
+
+# Credentials for the disposable Paperless-ngx used by the integration lane.
+.paperless-it.env
