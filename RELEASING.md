@@ -14,43 +14,118 @@ single deliberate act that publishes the package.
 
 ## One-time setup
 
-Nothing has ever been published, so the first release also needs this. Check it
-before cutting one — the workflow cannot do it for you.
+The workflow authenticates with **Trusted Publishing (OIDC)**. There is no npm
+token in this repository's secrets doing the work: the job asks GitHub for a
+short-lived OIDC token and exchanges it with npm for a publish token that lives
+only for the length of that publish. That matters here because the npm account
+has no 2FA — npm currently offers hardware-key 2FA only — so a stored publish
+token would be most of what stands between an attacker and every installer.
 
-1. **`NPM_TOKEN` repository secret**, for an account that may publish under the
-   `@smic` scope. Add it under *Settings → Secrets and variables → Actions → New
-   repository secret*, named exactly `NPM_TOKEN`. Never paste a token into a file
-   in this repository.
+Setup is one form on npmjs.com, and the workflow cannot do it for you.
 
-   A **granular access token** needs **both** of these, and neither is the
-   default:
+1. **Register the trusted publisher.** Sign in to npmjs.com as an account that
+   may publish under the `@smic` scope, then go to
+   *Packages → `@smic/paperless-mcp` → Settings → Trusted publisher*, pick
+   **GitHub Actions**, and fill in:
 
-   - permission **Read and write (publish and stage)** — *not* "stage only",
-     which cannot create a version at all; and
-   - **bypass 2FA enabled** — npm refuses an unattended publish otherwise.
-
-   Both were established the hard way on the 0.1.0 release. The failure modes are
-   worth recognising, because the first one does not say what it means:
-
-   | Token | Result |
+   | Field | Value |
    | --- | --- |
-   | Stage only | `E404 Not Found - PUT .../@smic%2fpaperless-mcp` |
-   | Publish and stage, no bypass | `E403 ... Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages.` |
-   | Publish and stage, bypass enabled | publishes |
+   | Organization or user | `smichaelsen` |
+   | Repository | `paperless-mcp` |
+   | Workflow filename | `npm-publish.yml` |
+   | Environment name | *leave empty* |
 
-   **That `E404` is an authorization failure, not a missing package.** npm answers
-   404 rather than 403 on an unauthorized write so it does not leak whether a
-   package exists — so a token problem reads exactly like a typo in the package
-   name. If a publish 404s, suspect the token before the name.
+   **Every field is matched exactly and case-sensitively.** The workflow
+   filename is just the filename — not `.github/workflows/npm-publish.yml` —
+   and it must carry the `.yml` extension, spelled the way the file is spelled.
+   Renaming or moving `.github/workflows/npm-publish.yml` silently revokes its
+   ability to publish until this form is updated to match.
 
-   A classic **automation** token also bypasses the 2FA prompt and works, but npm
-   is steering towards granular tokens, and #40 tracks replacing the stored token
-   with Trusted Publishing (OIDC) so there is no long-lived credential at all.
+   **Leave *Environment name* empty.** It is optional, and filling it in makes
+   npm require the job to run inside a GitHub environment of exactly that name.
+   The publish job declares no `environment:`, so a value here would reject
+   every publish.
+
+   The form lives under an existing package's settings, so a package has to
+   have been published at least once before a trusted publisher can be
+   registered for it. `@smic/paperless-mcp@0.1.0` was published with a token,
+   which is why this could not be part of the first release.
+
 2. **The scope must exist on npm** and the account must be a member of it.
+
 3. That is all. `--access public` is already in the workflow: scoped packages
    default to a restricted publish, and without that flag the first publish of a
    scoped package fails with `E402 Payment Required` even though the package is
    meant to be free and public.
+
+Constraints worth knowing: self-hosted runners are not supported (this repo uses
+`ubuntu-latest`), and a package may have at most 10 trusted publishers.
+
+### Fallback: publishing with a stored token
+
+Keep this. It is the rollback if trusted publishing ever fails, and it is how
+0.1.0 shipped. Restoring it means putting the token back into the publish job:
+add `registry-url: https://registry.npmjs.org` to the `actions/setup-node` step,
+and `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` to the `Publish` step's `env:`.
+
+The token itself is an **`NPM_TOKEN` repository secret**, for an account that may
+publish under the `@smic` scope, added under *Settings → Secrets and variables →
+Actions → New repository secret*, named exactly `NPM_TOKEN`. Never paste a token
+into a file in this repository.
+
+A **granular access token** needs **both** of these, and neither is the default:
+
+- permission **Read and write (publish and stage)** — *not* "stage only", which
+  cannot create a version at all; and
+- **bypass 2FA enabled** — npm refuses an unattended publish otherwise.
+
+Both were established the hard way on the 0.1.0 release, which took three
+attempts. The failure modes are worth recognising, because the first one does not
+say what it means:
+
+| Token | Result |
+| --- | --- |
+| Stage only | `E404 Not Found - PUT .../@smic%2fpaperless-mcp` |
+| Publish and stage, no bypass | `E403 ... Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages.` |
+| Publish and stage, bypass enabled | publishes |
+
+**That `E404` is an authorization failure, not a missing package.** npm answers
+404 rather than 403 on an unauthorized write so it does not leak whether a
+package exists — so a token problem reads exactly like a typo in the package
+name. If a publish 404s, suspect the token before the name.
+
+A classic **automation** token also bypasses the 2FA prompt and works, but npm is
+steering towards granular tokens.
+
+**Do not revoke `NPM_TOKEN` until a release has published successfully through
+trusted publishing.** Until then it is the only way back.
+
+### Why the publish job pins Node 24, and has no `registry-url`
+
+Two things in the publish job look arbitrary and are not.
+
+**Node 24.** Trusted Publishing requires npm >= 11.5.1 and Node >= 22.14.0. Node
+22 still ships npm 10.9.x (v22.23.2 → npm 10.9.8), so the job's previous
+`node-version: 22` was below the floor; Node 24 ships npm 11.19.0, and every
+24.x from 24.5.0 onward ships npm >= 11.5.1. The alternative — `npm install -g
+npm@latest` on Node 22 — pulls an unpinned npm over the network on every
+release, which is the kind of supply-chain surface this change exists to reduce.
+A guard step checks `npm --version` against 11.5.1 and fails in seconds with a
+sentence, so a future floor change cannot surprise a release at its last step.
+The quality gate still tests **both** 22 and 24: that matrix is about the Node
+versions users may run this server on, and is unrelated to publishing.
+
+**No `registry-url`.** `actions/setup-node` (through v6) writes an `.npmrc`
+containing `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, points
+`NPM_CONFIG_USERCONFIG` at it, and exports a **placeholder**
+`NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX` when the variable is unset. Deleting
+the `NODE_AUTH_TOKEN:` line from the workflow therefore does *not* leave the job
+tokenless — it leaves it holding a junk one. npm prefers OIDC, so publishes
+still succeed, but a *failed* OIDC exchange falls through to the placeholder and
+dies with an opaque registry `E401`/`E404` instead of "This command requires you
+to be logged in". Omitting `registry-url` removes the `.npmrc` and the
+placeholder both; npm defaults to `https://registry.npmjs.org/` regardless. If
+you ever add `registry-url` back, add the token back with it.
 
 ## Cutting a release
 
@@ -95,6 +170,16 @@ before cutting one — the workflow cannot do it for you.
    publishes anything.
 5. Verify: `npm view @smic/paperless-mcp version`.
 
+> **The first release after switching to trusted publishing is the experiment.**
+> There is no way to rehearse the OIDC exchange without publishing. Cut it as a
+> patch version so a failure costs one burnt version number, and check the run
+> log for `Successfully retrieved and set token` under the publish step. If it
+> fails, the recovery is the [token fallback](#fallback-publishing-with-a-stored-token):
+> restore `registry-url` and `NODE_AUTH_TOKEN`, bump to the next patch, and cut
+> another release — a version number that failed to publish cannot be reused.
+> Only once a release has gone out through trusted publishing should `NPM_TOKEN`
+> be revoked on npm and deleted from the repository secrets.
+
 ## What gets published
 
 `files` in `package.json` is `["build", "NOTICE"]`, so the tarball is the
@@ -136,6 +221,15 @@ The workflow publishes with `--provenance`, which uses the job's OIDC token
 (`id-token: write`) to attest that the tarball was built by this workflow from
 this commit. npm shows the resulting badge on the package page and anyone can
 verify it. It requires a public repository — this one is — and costs nothing.
+
+Trusted publishing enables provenance by default, so the flag is documented as
+unnecessary. It is kept anyway, on purpose: npm's auto-enable sits inside a
+`try/catch` that swallows every error and logs it at verbose level only, so
+without the flag a failure to enable provenance would be invisible — the release
+would publish, and the attestation would simply not be there. 0.1.0 has one;
+0.1.1 losing it quietly would be a regression nobody would notice. With the flag,
+a provenance failure fails the publish.
+
 If a publish ever fails inside provenance generation specifically, dropping the
 flag is a safe fallback; dropping `--access public` is not.
 

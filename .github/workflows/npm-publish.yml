@@ -2,8 +2,17 @@
 # release is published. Nothing else triggers it: no push, no tag on its own,
 # no draft.
 #
-# See RELEASING.md for the human side of the process, including the one secret
-# this workflow needs (NPM_TOKEN).
+# Authentication is npm Trusted Publishing (OIDC): there is no stored npm
+# credential. The job mints a short-lived GitHub OIDC token and exchanges it
+# with npm for a publish token that lives for the length of the publish.
+#
+# THE FILENAME OF THIS FILE IS PART OF THE CREDENTIAL. npm matches the trusted
+# publisher registration against `npm-publish.yml` exactly, case-sensitively,
+# extension included. Renaming or moving this file revokes its ability to
+# publish until the registration on npmjs.com is updated to match.
+#
+# See RELEASING.md for the human side of the process, including the one-time
+# registration on npmjs.com and the token-based rollback.
 
 name: Publish to npm
 
@@ -74,27 +83,57 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Required for npm provenance: npm exchanges this OIDC token with Sigstore
-      # to attest that this tarball was built from this commit of this repo.
+      # Does double duty. npm exchanges this OIDC token with the registry for a
+      # short-lived publish token (Trusted Publishing), and separately with
+      # Sigstore to attest that this tarball was built from this commit of this
+      # repo (provenance). Without it the job has no credential at all.
       id-token: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24, not 22, and the publish job only — the quality gate keeps
+          # testing both, because that is about which Node versions users may
+          # run this server on, not about how it is published.
+          #
+          # Trusted Publishing needs npm >= 11.5.1 and Node >= 22.14.0. Node 22
+          # ships npm 10.9.x to this day (v22.23.2 -> npm 10.9.8), so the old
+          # `node-version: 22` is below the floor. Node 24 ships npm 11.19.0,
+          # and every 24.x since 24.5.0 has shipped npm >= 11.5.1, so the
+          # newest-24.x that setup-node resolves cannot land under the floor.
+          # Preferred over `npm i -g npm@latest` because pulling an unpinned
+          # npm from the network on every release adds exactly the kind of
+          # supply-chain surface this change exists to remove.
+          node-version: 24
           cache: npm
-          registry-url: https://registry.npmjs.org
+          # registry-url is deliberately NOT set, and must not be added back.
+          # actions/setup-node <= v6 writes an .npmrc containing
+          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, points
+          # NPM_CONFIG_USERCONFIG at it, and exports a placeholder
+          # NODE_AUTH_TOKEN of `XXXXX-XXXXX-XXXXX-XXXXX` when the variable is
+          # unset (actions/setup-node src/authutil.ts; only the unreleased v7
+          # stopped doing this). That plants a junk credential behind the OIDC
+          # exchange, so if trusted publishing ever fails to authenticate, npm
+          # falls through to the placeholder and the run dies with an opaque
+          # registry E401/E404 instead of a legible "requires you to be logged
+          # in". npm defaults to https://registry.npmjs.org/ anyway, which is
+          # what the OIDC audience is derived from.
 
-      - name: Check the publish credential is present
-        # Fail in seconds rather than after the full build, with a sentence
-        # instead of npm's ENEEDAUTH. See RELEASING.md § One-time setup.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Check the npm version supports trusted publishing
+        # Replaces the old "is NPM_TOKEN set" guard: same idea, new failure
+        # mode. Trusted Publishing is silently unavailable below npm 11.5.1 —
+        # npm would simply not find a credential — so fail in seconds with a
+        # sentence rather than at the last step of a release whose GitHub
+        # release page is already public.
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "The NPM_TOKEN repository secret is not set, so npm publish cannot authenticate." >&2
-            echo "Add an npm automation token as NPM_TOKEN, then re-run this workflow." >&2
+          node_version="$(node --version)"
+          npm_version="$(npm --version)"
+          required="11.5.1"
+          echo "node $node_version, npm $npm_version"
+          if [ "$(printf '%s\n%s\n' "$required" "$npm_version" | sort -V | head -n 1)" != "$required" ]; then
+            echo "npm $npm_version is below $required, which Trusted Publishing (OIDC) requires." >&2
+            echo "Raise node-version in this job, or add an explicit npm upgrade step." >&2
             exit 1
           fi
 
@@ -122,13 +161,20 @@ jobs:
         # --provenance: publishes a signed build-provenance attestation, so
         #   consumers can verify the tarball came from this workflow run.
         #   Requires the id-token permission above and a public repository.
+        #   Kept even though trusted publishing enables provenance on its own:
+        #   npm's auto-enable lives in a try/catch that swallows every error
+        #   and logs it at verbose only (npm/cli lib/utils/oidc.js), so
+        #   dropping the flag would make provenance a silent maybe. 0.1.0 has
+        #   an attestation and losing it quietly in 0.1.1 is worse than an
+        #   explicit flag the docs merely call unnecessary. Passing it also
+        #   makes a provenance failure fail the publish loudly.
         # --tag: a GitHub pre-release must not land on npm's `latest`, which is
         #   what a plain `npm publish` would do and what every `npm install`
         #   without a version would then pick up. Marking the release as a
         #   pre-release in the GitHub UI is enough to route it to `next`.
+        # No NODE_AUTH_TOKEN: the credential is the OIDC exchange above.
         # npm publish runs prepublishOnly -> npm run build, so the tarball is
         # built from this checkout rather than from anything cached.
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_DIST_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
         run: npm publish --access public --provenance --tag "$NPM_DIST_TAG"
