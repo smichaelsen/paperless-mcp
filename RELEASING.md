@@ -61,6 +61,15 @@ Setup is one form on npmjs.com, and the workflow cannot do it for you.
 Constraints worth knowing: self-hosted runners are not supported (this repo uses
 `ubuntu-latest`), and a package may have at most 10 trusted publishers.
 
+> **Do not turn on the package's "require trusted publishing" / disallow-tokens
+> setting yet.** Registering a trusted publisher does *not* by itself disable
+> token publishing — the two coexist, which is exactly what makes the rollback
+> below possible. That separate switch is the one setting that silently destroys
+> it: with it on, restoring `NPM_TOKEN` no longer publishes anything, and the
+> recovery path for a failed OIDC release is gone at the moment it is needed.
+> Enable it only once `NPM_TOKEN` has been revoked *and* at least one release has
+> published successfully through OIDC.
+
 ### Fallback: publishing with a stored token
 
 Keep this. It is the rollback if trusted publishing ever fails, and it is how
@@ -172,13 +181,50 @@ you ever add `registry-url` back, add the token back with it.
 
 > **The first release after switching to trusted publishing is the experiment.**
 > There is no way to rehearse the OIDC exchange without publishing. Cut it as a
-> patch version so a failure costs one burnt version number, and check the run
-> log for `Successfully retrieved and set token` under the publish step. If it
-> fails, the recovery is the [token fallback](#fallback-publishing-with-a-stored-token):
-> restore `registry-url` and `NODE_AUTH_TOKEN`, bump to the next patch, and cut
-> another release — a version number that failed to publish cannot be reused.
-> Only once a release has gone out through trusted publishing should `NPM_TOKEN`
-> be revoked on npm and deleted from the repository secrets.
+> patch version, and read the publish step's log — see below for what success
+> and failure look like there. Only once a release has gone out through trusted
+> publishing should `NPM_TOKEN` be revoked on npm and deleted from the
+> repository secrets.
+
+### Reading the publish log
+
+The publish step runs `npm publish … --loglevel verbose`, because npm logs the
+**entire** OIDC exchange at `verbose` and its default level is `notice`. At the
+default level a trusted-publishing failure surfaces only as a bare `ENEEDAUTH`
+with no clue which registration field is wrong.
+
+- **Success:** `npm verb oidc Successfully retrieved and set token`, followed by
+  the usual publish output. Confirm with `npm view @smic/paperless-mcp version`.
+- **The registration is missing or a field does not match:**
+  `npm verb oidc Failed token exchange request with body message: …` — the
+  registry's own message names the problem — and then `ENEEDAUTH`,
+  *"This command requires you to be logged in to https://registry.npmjs.org/"*.
+- **No `oidc` lines at all:** the two "skipped" branches log at `silly`, not
+  `verbose` — that means the job never got an ID token, i.e. `id-token: write`
+  is missing from the job's `permissions`. Re-run with `--loglevel silly` to
+  confirm, but check the workflow file first; it is faster.
+
+### A failed publish does not always burn the version number
+
+The distinction matters, because it decides whether recovery is a re-run or a
+version bump.
+
+- **Failed to authenticate** — `ENEEDAUTH`, which is every OIDC failure above —
+  **burns nothing.** `npm publish` throws it before the version check and before
+  any write reaches the registry, so nothing was created. Fix the registration
+  and **re-run the same job** from the Actions UI. Same version, same release,
+  no bump, and no reason to touch `NPM_TOKEN`.
+- **Reached the registry and was rejected** — `E403`, `E409`, a partially
+  completed publish, or `You cannot publish over the previously published
+  versions` on a retry — **may have consumed the version.** Check
+  `npm view @smic/paperless-mcp versions`. If the version is listed, bump to the
+  next patch: npm does not allow republishing over a version, and unpublishing
+  is worse.
+
+If trusted publishing cannot be made to work at all, the recovery is the
+[token fallback](#fallback-publishing-with-a-stored-token): restore
+`registry-url` and `NODE_AUTH_TOKEN`, then re-run or re-release per the rule
+above.
 
 ## What gets published
 

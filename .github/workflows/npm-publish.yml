@@ -172,9 +172,21 @@ jobs:
         #   what a plain `npm publish` would do and what every `npm install`
         #   without a version would then pick up. Marking the release as a
         #   pre-release in the GitHub UI is enough to route it to `next`.
+        # --loglevel verbose: the entire OIDC exchange is logged at `verbose`
+        #   (npm/cli lib/utils/oidc.js) and npm's default loglevel is `notice`,
+        #   so at the default level both the success line and — far more
+        #   importantly — `Failed token exchange request with body message: …`
+        #   are invisible. A trusted-publishing failure would otherwise surface
+        #   only as a bare ENEEDAUTH with no hint as to which registration
+        #   field is wrong. This path cannot be rehearsed without publishing,
+        #   so the one run that exercises it has to be legible. The cost is
+        #   noise in a job that runs a few times a year.
+        #   Safe for secrets: npm pipes log output through @npmcli/redact
+        #   (lib/utils/display.js), and no oidc.js log line interpolates a
+        #   token value in the first place — they log messages, not credentials.
         # No NODE_AUTH_TOKEN: the credential is the OIDC exchange above.
         # npm publish runs prepublishOnly -> npm run build, so the tarball is
         # built from this checkout rather than from anything cached.
         env:
           NPM_DIST_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
-        run: npm publish --access public --provenance --tag "$NPM_DIST_TAG"
+        run: npm publish --access public --provenance --tag "$NPM_DIST_TAG" --loglevel verbose
