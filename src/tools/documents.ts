@@ -100,7 +100,7 @@ export function registerDocumentTools(server, api) {
     "update_document",
     "Update metadata for an existing document. Use this to correct or set the document date, title, correspondent, document type, tags, and other fields on a document that is already in Paperless-NGX.",
     {
-      id: z.number().describe("Unique document ID to update. Get this from search_documents or get_document."),
+      id: z.number().describe("Unique document ID to update. Get this from search_documents."),
       title: z.string().optional().describe("New title for the document."),
       created: z.string().optional().describe("Document date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss). Use this to set the date to the actual date on the document — Paperless often defaults to the upload/scan date instead."),
       correspondent: z.number().nullable().optional().describe("ID of correspondent to assign, or null to clear. Use list_correspondents to get valid IDs."),

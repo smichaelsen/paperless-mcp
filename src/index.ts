@@ -36,6 +36,18 @@ if (portIndex !== -1 && args[portIndex + 1]) {
   if (!isNaN(parsed)) port = parsed;
 }
 
+/**
+ * Advertised in the `initialize` response as `serverInfo`. The version is a
+ * literal rather than a read of `package.json`: importing a file from outside
+ * `src/` would pull it into the TypeScript root and move the compiled
+ * entrypoint off `build/index.js`, which is the `paperless-mcp` bin.
+ *
+ * It therefore has to be bumped alongside `package.json` by hand — see
+ * RELEASING.md. `tests/serverInfo.test.ts` fails if the two ever disagree.
+ */
+const SERVER_NAME = "paperless-ngx";
+const SERVER_VERSION = "0.1.0";
+
 async function main() {
   installProcessErrorHandlers();
 
@@ -96,7 +108,7 @@ async function main() {
   // call; moving `createServer` out of it would need the flag to move too.
   let modeLogged = false;
   const createServer = (): McpServer => {
-    const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
+    const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
     const registered = registerAllTools(server, api, toolAccess);
     if (!modeLogged) {
       modeLogged = true;

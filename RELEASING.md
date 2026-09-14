@@ -34,7 +34,13 @@ before cutting one — the workflow cannot do it for you.
 
 1. Land everything you want in the release on `main`, green CI.
 2. Bump `version` in `package.json` (and the lockfile — `npm version <x.y.z>
-   --no-git-tag-version` does both), following semver. Commit that on `main`.
+   --no-git-tag-version` does both), following semver. **Then bump
+   `SERVER_VERSION` in `src/index.ts` to match**: it is advertised to every MCP
+   client as `serverInfo.version` in the `initialize` response, and it cannot be
+   read from `package.json` without moving the compiled entrypoint off
+   `build/index.js`. `tests/serverInfo.test.ts` fails if the two disagree, so a
+   miss costs a red run rather than a server that misreports itself. Commit both
+   on `main`.
 3. Create the GitHub release:
 
    ```bash
