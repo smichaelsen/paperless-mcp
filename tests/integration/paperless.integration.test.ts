@@ -325,11 +325,16 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
         name: fixtureName("tag-204"),
         color: "#a6cee3",
       });
+      // Registered before it is deleted, not after: if the assertions below
+      // fail, the fixture still has to be cleaned up by the afterAll hook.
+      createdTags.push(probeTag.id);
+
       const raw = await rawRequest(`/tags/${probeTag.id}/`, {
         method: "DELETE",
       });
       expect(raw.status).toBe(204);
       expect(await raw.text()).toBe("");
+      createdTags.splice(createdTags.indexOf(probeTag.id), 1);
 
       await expect(api.deleteTag(tagId)).resolves.toBeNull();
       createdTags.splice(createdTags.indexOf(tagId), 1);
