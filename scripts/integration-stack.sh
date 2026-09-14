@@ -192,6 +192,52 @@ cmd_up() {
   fi
 }
 
+# Run the integration suite, refusing to report success unless it actually
+# talked to Paperless.
+#
+# This exists because `vitest` exits 0 when every test skips, and the suite
+# skips itself when PAPERLESS_TEST_URL is unset — by design, so that `npm test`
+# on a laptop stays hermetic. In CI that means a green job proves nothing on
+# its own: the only thing standing between "ran 32 tests against a real
+# instance" and "ran none and said success" is that `up` happened to exit 0.
+# That chain is sound and asserted nowhere, which is precisely the kind of
+# unverified claim this whole lane exists to stamp out.
+#
+# So two separate guards, because they are two separate claims:
+#
+#   1. the URL is set — catches a change to how the stack exports it;
+#   2. tests actually passed — catches the case where the URL is set but the
+#      suite skipped anyway, which guard 1 cannot see (rename the variable the
+#      suite reads and guard 1 still passes while every test skips).
+cmd_test() {
+  need jq
+  : "${PAPERLESS_TEST_URL:?is not set, so the integration suite would skip every test and still exit 0. Bring a stack up first (integration-stack.sh up), or stop calling this from a job that never started one.}"
+
+  local report="${TMPDIR:-/tmp}/vitest-integration-report.json"
+  local status=0
+  npm run test:integration -- \
+    --reporter=default --reporter=json --outputFile.json="${report}" || status=$?
+
+  if [[ ! -f "${report}" ]]; then
+    die "vitest wrote no JSON report to ${report}; cannot confirm that any test ran."
+  fi
+
+  local passed
+  passed="$(jq -r '.numPassedTests // 0' "${report}")"
+  echo "integration-stack: ${passed} integration test(s) passed"
+
+  if ((status != 0)); then
+    return "${status}"
+  fi
+
+  if ((passed < 1)); then
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+      echo "::error::The integration suite reported success without running a single test."
+    fi
+    die "the integration suite passed 0 tests. PAPERLESS_TEST_URL was set, so it skipped for some other reason — this must never be reported as a successful run against a live Paperless-ngx."
+  fi
+}
+
 cmd_env() {
   [[ -f "${env_file}" ]] || die "no ${env_file}; run './scripts/integration-stack.sh up' first"
   cat "${env_file}"
@@ -215,10 +261,11 @@ cmd_logs() {
 
 case "${1:-}" in
   up) cmd_up ;;
+  test) cmd_test ;;
   env) cmd_env ;;
   down) cmd_down ;;
   logs) shift; cmd_logs "$@" ;;
   *)
-    die "usage: $(basename "$0") {up|env|down|logs}"
+    die "usage: $(basename "$0") {up|test|env|down|logs}"
     ;;
 esac

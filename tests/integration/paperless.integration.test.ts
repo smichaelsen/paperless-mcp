@@ -6,8 +6,19 @@
  * `compose.integration.yaml` and `scripts/integration-stack.sh`) and sets the
  * variables; the README section "Integration tests" documents the local path.
  *
- * Everything these tests create is prefixed with `mcp-it-` and removed again in
+ * Everything these tests create is prefixed with `mcp-it-` and deleted again in
  * the cleanup hook. They never touch pre-existing objects.
+ *
+ * One caveat about "deleted", because it matters if you ever point this at an
+ * instance you keep: tags, correspondents and document types really are gone,
+ * but Paperless **soft-deletes documents**. A deleted document moves to the
+ * trash, where it stops being listed and returns 404 from the API — which is
+ * what these tests assert — and is only erased when the trash is emptied,
+ * after PAPERLESS_EMPTY_TRASH_DELAY days or on demand. The disposable stack in
+ * `compose.integration.yaml` disables the trash-emptying task outright and
+ * throws the whole container away instead, so nothing accumulates there. On a
+ * long-lived instance, document fixtures will sit in the trash until it is
+ * emptied.
  *
  * What belongs in this file is the narrow set of claims that only a live server
  * can settle — the ones where a mock would simply answer whatever the client
@@ -290,12 +301,28 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
         pageFixtureIds.push(tag.id);
       }
 
+      // A sixth tag the filter must *exclude*. Without it this test passes on a
+      // fresh instance even if `name__istartswith` is silently ignored — the
+      // five fixtures would be the only tags there, so "everything" and "the
+      // five" are the same answer. Paperless ignores filter parameters it does
+      // not recognise rather than rejecting them (an unknown `name__bogus=`
+      // returns the full list), which is the same trap as `?q=` in the search
+      // test, and it deserves the same guard.
+      const decoy: any = await api.createTag({
+        name: fixtureName("decoy"),
+        color: "#a6cee3",
+      });
+      createdTags.push(decoy.id);
+
       const filter = `&name__istartswith=${encodeURIComponent(
         fixtureName("page-")
       )}&ordering=id`;
 
       const first: any = await api.getTags(`?page=1&page_size=2${filter}`);
-      expect(first.count).toBe(5);
+      expect(
+        first.count,
+        "the name__istartswith filter returned the decoy too, so it was ignored and this test would prove nothing about pagination"
+      ).toBe(5);
       expect(first.previous).toBeNull();
       expect(first.next).not.toBeNull();
       expect(first.results).toHaveLength(2);
@@ -315,6 +342,7 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
       // page boundary — the three ways real pagination goes wrong.
       expect(new Set(walked).size).toBe(5);
       expect(walked).toEqual([...pageFixtureIds].sort((a, b) => a - b));
+      expect(walked).not.toContain(decoy.id);
     });
   });
 
@@ -532,14 +560,44 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
         const total: any = await api.getDocuments("?page_size=1");
         expect(total.count).toBeGreaterThanOrEqual(2);
 
-        const hit = await poll(
-          `full-text search to index ${searchNonce}`,
-          60_000,
-          async () => {
-            const result: any = await api.searchDocuments(searchNonce, 1, 10);
-            return result.count === 1 ? result : undefined;
-          }
-        );
+        // Two different failures hide behind "no hit yet", and they need
+        // telling apart: the index may not have caught up (wait), or the
+        // parameter name may be wrong and Paperless silently returned
+        // everything (waiting will never help). Check the second one first and
+        // fail immediately, because a search that returns the whole library
+        // cannot become correct by waiting — and sixty seconds spent reporting
+        // "indexing timed out" would send whoever hits the exact bug this test
+        // exists to catch off to look at the indexer.
+        const firstLook: any = await api.searchDocuments(searchNonce, 1, 10);
+        expect(
+          firstLook.count,
+          `Full-text search for a term in one document returned all ${total.count} documents on the instance. That is what Paperless does with a filter parameter it does not recognise, so searchDocuments is almost certainly sending the wrong parameter name — it must send 'query='.`
+        ).not.toBe(total.count);
+
+        let lastCount: number | undefined = firstLook.count;
+        let hit: any;
+        try {
+          hit = await poll(
+            `full-text search to index ${searchNonce}`,
+            60_000,
+            async () => {
+              const result: any = await api.searchDocuments(
+                searchNonce,
+                1,
+                10
+              );
+              lastCount = result.count;
+              return result.count === 1 ? result : undefined;
+            }
+          );
+        } catch {
+          throw new Error(
+            `Full-text search for ${searchNonce} never returned exactly 1 document within 60s; the last count was ${lastCount} and the instance holds ${total.count}. ` +
+              (lastCount === 0
+                ? "A count of 0 means the document was uploaded and consumed but never made it into the full-text index."
+                : "A non-zero count that is not 1 means the search matched the wrong set — check the query parameter and the nonce.")
+          );
+        }
 
         expect(hit.count).toBe(1);
         expect(hit.count).toBeLessThan(total.count);

@@ -33,6 +33,16 @@ neither `X-Api-Version` nor `X-Version` — Paperless fails content negotiation 
 it stamps those headers — so the error can say that the version was refused but not
 which version the instance would have offered.
 
+### Known upstream quirk on 2.16.0
+
+Calling `bulk_edit_documents` with `method: "set_permissions"` and no `permissions`
+argument makes **Paperless-ngx 2.16.0 answer `500 Internal Server Error`** instead of a
+validation error. Every parameter of that tool is optional, so this is reachable from a
+normal tool call; the tool surfaces it as `HTTP error! status: 500`. It is an unhandled
+exception upstream, not something this client can prevent — supply the `permissions`
+argument whenever the method is `set_permissions`. Paperless-ngx 3.1.3 answers a clean
+`400` naming the missing field.
+
 ## Quick Start
 
 ```bash
@@ -501,8 +511,13 @@ and [zod](https://github.com/colinhacks/zod), over the
 The tests in `tests/integration/` run against a real Paperless-ngx instance and are
 **opt-in**: without `PAPERLESS_TEST_URL` they skip themselves, so `npm test` on a
 laptop stays hermetic. They only ever create their own fixtures, named
-`mcp-it-<random>-…`, and remove them again in the cleanup hook, including on failure —
+`mcp-it-<random>-…`, and delete them again in the cleanup hook, including on failure —
 but point them at a **disposable** instance anyway, not your production archive.
+
+Note that Paperless **soft-deletes documents**: the document fixtures move to the trash
+rather than disappearing, and stay there until it is emptied. Tags, correspondents and
+document types are deleted outright. The disposable stack below sidesteps this by
+throwing the container away; a long-lived instance will collect them.
 
 The easiest way to get one is the disposable stack this repository ships. It is the
 same stack CI uses, so a green run locally and a green run in CI mean the same thing:
@@ -510,9 +525,14 @@ same stack CI uses, so a green run locally and a green run in CI mean the same t
 ```bash
 PAPERLESS_IT_VERSION=3.1.3 ./scripts/integration-stack.sh up
 eval "$(./scripts/integration-stack.sh env)"   # PAPERLESS_TEST_URL / _TOKEN / _UPLOAD
-npm run test:integration
+./scripts/integration-stack.sh test            # npm run test:integration, guarded
 ./scripts/integration-stack.sh down
 ```
+
+Use the `test` subcommand rather than `npm run test:integration` directly in anything
+automated. The suite skips itself when `PAPERLESS_TEST_URL` is unset and vitest then
+exits `0`, so a bare run can report success having executed nothing at all; `test`
+refuses to finish green unless the URL is set **and** at least one test actually ran.
 
 `up` boots Redis and Paperless-ngx (SQLite, no volumes — see
 `compose.integration.yaml`), creates a superuser with a password it generates for that
