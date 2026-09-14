@@ -27,8 +27,14 @@ describe("serverInfo", () => {
     expect(declared![1]).toBe(pkg.version);
   });
 
-  it("leaves no other hard-coded version in the server construction", () => {
+  it("builds the server from the constants, not from a literal", () => {
+    // Without this, reverting the construction to a hard-coded version string
+    // leaves the first assertion passing and the drift back in place. Matched
+    // loosely so that reformatting the line — it is already one character over
+    // Prettier's default print width — cannot fail the test spuriously.
     const source = readFileSync(join(ROOT, "src", "index.ts"), "utf8");
-    expect(source).toContain("new McpServer({ name: SERVER_NAME, version: SERVER_VERSION })");
+    expect(source).toMatch(
+      /new McpServer\(\s*\{[^}]*version:\s*SERVER_VERSION\b/
+    );
   });
 });
