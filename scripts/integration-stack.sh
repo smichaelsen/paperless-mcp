@@ -29,6 +29,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="${repo_root}/compose.integration.yaml"
 env_file="${repo_root}/.paperless-it.env"
+# Credentials are assembled here and moved into place only once every one of
+# them is known. `up` used to truncate the real file up front and write the
+# admin password last, so *any* failure in between — a bad image tag, a refused
+# API version — left a perfectly healthy running stack with an empty
+# credentials file, and the next `up` then spent 180s failing to authenticate
+# and blamed a superuser that existed all along. Staging plus one `mv` means a
+# failed `up` changes nothing.
+env_staging="${env_file}.partial"
+trap 'rm -f "${env_staging}"' EXIT
 
 port="${PAPERLESS_IT_PORT:-8000}"
 base_url="http://localhost:${port}"
@@ -85,7 +94,7 @@ export_value() {
     # one careless upload-artifact step away from being published.
     return
   fi
-  printf 'export %s=%q\n' "${name}" "${value}" >>"${env_file}"
+  printf 'export %s=%q\n' "${name}" "${value}" >>"${env_staging}"
 }
 
 wait_for_healthy() {
@@ -220,8 +229,8 @@ cmd_up() {
 
   local started=$SECONDS
   if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
-    : >"${env_file}"
-    chmod 600 "${env_file}"
+    : >"${env_staging}"
+    chmod 600 "${env_staging}"
   fi
 
   # Pulling as its own step, and *not* tolerating a failure: a tag that does
@@ -251,7 +260,9 @@ cmd_up() {
   # two, and is mode 600 and gitignored; in CI nothing is written at all.
   if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
     printf 'export %s=%q\n' PAPERLESS_IT_ADMIN_PASSWORD \
-      "${PAPERLESS_IT_ADMIN_PASSWORD}" >>"${env_file}"
+      "${PAPERLESS_IT_ADMIN_PASSWORD}" >>"${env_staging}"
+    # Everything is known now, so publish the lot in one move.
+    mv -f "${env_staging}" "${env_file}"
   fi
 
   echo "integration-stack: Paperless-ngx ${PAPERLESS_IT_VERSION} ready at ${base_url} in $((SECONDS - started))s"
