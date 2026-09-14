@@ -33,15 +33,6 @@ neither `X-Api-Version` nor `X-Version` — Paperless fails content negotiation 
 it stamps those headers — so the error can say that the version was refused but not
 which version the instance would have offered.
 
-### Known upstream quirk on 2.16.0
-
-Calling `bulk_edit_documents` with `method: "set_permissions"` and no `permissions`
-argument makes **Paperless-ngx 2.16.0 answer `500 Internal Server Error`** instead of a
-validation error. Every parameter of that tool is optional, so this is reachable from a
-normal tool call; the tool surfaces it as `HTTP error! status: 500`. It is an unhandled
-exception upstream, not something this client can prevent — supply the `permissions`
-argument whenever the method is `set_permissions`. Paperless-ngx 3.1.3 answers a clean
-`400` naming the missing field.
 
 ## Quick Start
 
@@ -199,6 +190,16 @@ they create a new document and leave the originals in place. `pages` stays becau
 Paperless requires it to `split`; on its own it does nothing, since the method that
 would delete pages is not reachable. `PAPERLESS_ALLOW_DESTRUCTIVE` brings the full
 enum and all arguments back.
+
+Two of its arguments are reshaped before they go to Paperless, because the tool's
+surface and the API's payload disagree. `set_permissions` takes its settings under a
+single `permissions` argument (`set_permissions`, `owner`, `merge`), which the handler
+flattens to the top level of the request — the API looks for `set_permissions` there,
+and until this was fixed the method never worked on any supported version. And
+`delete_pages` receives `pages` as the documented `1,3,5-7` string and sends it on as a
+list of integers, which is the only form it accepts; `split` takes the same string and
+is passed through untouched, because Paperless expands that one itself. Both shapes are
+asserted against live 2.16.0 and 3.1.3 instances in the integration suite.
 
 ### Client allowlist and approval policy
 

@@ -39,6 +39,7 @@ import {
   readServerApiVersion,
   readServerVersion,
 } from "../../src/api/apiVersion";
+import { buildBulkEditParameters } from "../../src/tools/documents";
 
 const baseUrl = process.env.PAPERLESS_TEST_URL?.replace(/\/+$/, "");
 const token = process.env.PAPERLESS_TEST_TOKEN;
@@ -651,27 +652,138 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
       expect(document.tags).toContain(tag.id);
     });
 
+    it("sets permissions on a real document, and they land", async () => {
+      // The case the vocabulary probe could not see. Asserting that
+      // `set_permissions` is a *recognised* method says nothing about whether
+      // the payload around it is right, and it was not: the tool grouped
+      // set_permissions/owner/merge under a `permissions` argument and sent it
+      // nested, so Paperless never found `set_permissions` and the method had
+      // never worked on any supported version. This sends what the tool now
+      // builds and checks the result on the document.
+      const usersResponse = await rawRequest("/users/?page_size=1");
+      const users: any = await usersResponse.json();
+      const userId = users.results[0].id;
+
+      const parameters = buildBulkEditParameters("set_permissions", {
+        permissions: {
+          set_permissions: {
+            view: { users: [userId], groups: [] },
+            change: { users: [userId], groups: [] },
+          },
+          owner: userId,
+          merge: false,
+        },
+      });
+      // The flattening is the whole fix, so assert the shape before sending it.
+      expect(parameters).toHaveProperty("set_permissions");
+      expect(parameters).not.toHaveProperty("permissions");
+
+      const result: any = await api.bulkEditDocuments(
+        [searchableId],
+        "set_permissions",
+        parameters
+      );
+      expect(result).toEqual({ result: "OK" });
+
+      const document: any = await api.getDocument(searchableId);
+      expect(document.owner).toBe(userId);
+    });
+
+    it("rejects the nested shape the tool used to send, on this very instance", async () => {
+      // Proof that the test above is load-bearing rather than decorative: the
+      // payload this client sent until now is refused by the live server.
+      // 3.1.3 answers 400 "set_permissions not specified"; 2.16.0 indexes the
+      // missing key unguarded and answers 500. Either way the client throws,
+      // which is exactly what users were getting.
+      await expect(
+        api.bulkEditDocuments([searchableId], "set_permissions", {
+          permissions: {
+            set_permissions: {
+              view: { users: [], groups: [] },
+              change: { users: [], groups: [] },
+            },
+          },
+        })
+      ).rejects.toThrow();
+    });
+
+    it("sends delete_pages a list, which is the only thing it accepts", async () => {
+      // `pages` is documented by this tool as "1,3,5-7" and is correct in that
+      // form for `split`, which Paperless expands itself. `delete_pages`
+      // validates isinstance(pages, list) and rejects the string. An empty
+      // document list keeps this from touching any data — the validation being
+      // probed happens before anything is edited.
+      const asString = await rawRequest("/documents/bulk_edit/", {
+        method: "POST",
+        body: JSON.stringify({
+          documents: [],
+          method: "delete_pages",
+          parameters: { pages: "1,3" },
+        }),
+      });
+      expect(await asString.text()).toContain("pages must be a list");
+
+      const asList = await rawRequest("/documents/bulk_edit/", {
+        method: "POST",
+        body: JSON.stringify({
+          documents: [],
+          method: "delete_pages",
+          parameters: buildBulkEditParameters("delete_pages", {
+            pages: "1,3",
+          }),
+        }),
+      });
+      expect(
+        await asList.text(),
+        "the expanded page list was still rejected as the wrong type"
+      ).not.toContain("pages must be a list");
+    });
+
     it(
       "bulk-deletes the documents and they stop being retrievable",
       async () => {
         const ids = [searchableId, otherId];
-        await api.bulkEditDocuments(ids, "delete");
+        let lastStatus = 0;
+
+        // The delete is re-issued on every attempt rather than issued once and
+        // then waited on, and that is not belt-and-braces — it is the only
+        // thing that can work.
+        //
+        // `{"result":"OK"}` from this endpoint is not evidence that anything
+        // was deleted. Upstream's `bulk_edit.delete` wraps the database delete
+        // and the index update in a single try/except, logs
+        // "Error deleting documents: ..." and returns "OK" regardless. So a
+        // delete that loses a SQLite write lock to the consumer reports
+        // success and leaves the document exactly where it was — verified by
+        // holding a write lock inside the container during a delete: the log
+        // shows "database is locked", and the document is still retrievable
+        // long after the lock is gone.
+        //
+        // That is why this is not a timeout that wants widening. A delete
+        // which did not happen never completes, so waiting is useless and
+        // asking again is the only remedy; 30s of retries says more than 300s
+        // of patience.
+        await poll("the documents to be deleted", 30_000, async () => {
+          // A repeat delete of already-deleted ids is rejected by validation,
+          // which is fine — the GET below is what decides.
+          await api.bulkEditDocuments(ids, "delete").catch(() => undefined);
+          const response = await rawRequest(`/documents/${searchableId}/`);
+          await response.text();
+          lastStatus = response.status;
+          return response.status === 404 ? true : undefined;
+        }).catch(() => {
+          throw new Error(
+            `Documents ${ids.join(", ")} were still retrievable (HTTP ${lastStatus}) after repeated delete requests over 30s. ` +
+              "Paperless answers this endpoint with OK even when the delete threw, so check the Paperless log for " +
+              '"Error deleting documents" — a lost SQLite write lock is the known cause, and it is not something more waiting would fix.'
+          );
+        });
+
         for (const id of ids) {
           createdDocuments.splice(createdDocuments.indexOf(id), 1);
         }
-
-        // bulk_edit queues a Celery task, and the stack runs a single task
-        // worker, so a delete lands behind whatever the preceding tests
-        // queued. Waiting generously here is what keeps this lane
-        // non-flaky; the assertion is still that it happens, not that it
-        // might.
-        await poll("the deleted documents to disappear", 60_000, async () => {
-          const response = await rawRequest(`/documents/${searchableId}/`);
-          await response.text();
-          return response.status === 404 ? true : undefined;
-        });
       },
-      90_000
+      60_000
     );
   });
 });

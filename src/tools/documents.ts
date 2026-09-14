@@ -1,6 +1,106 @@
 import { z } from "zod";
 import { toTextResult } from "./result";
 
+/**
+ * Expand a page specification like `1,3,5-7` into `[1, 3, 5, 6, 7]`.
+ *
+ * `delete_pages` is validated upstream with `isinstance(parameters["pages"],
+ * list)` and a check that every entry is an integer, so the comma-and-range
+ * string this tool documents has to be expanded before it is sent. The range
+ * semantics here are the ones Paperless itself applies to the `split` method's
+ * identically-formatted string: inclusive at both ends.
+ */
+export function expandPageSpecification(specification: string): number[] {
+  const pages: number[] = [];
+
+  for (const part of specification.split(",")) {
+    const piece = part.trim();
+    if (piece === "") continue;
+
+    const range = piece.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      const from = Number(range[1]);
+      const to = Number(range[2]);
+      if (to < from) {
+        throw new Error(
+          `Invalid page range "${piece}": the end page is before the start page.`
+        );
+      }
+      for (let page = from; page <= to; page++) pages.push(page);
+      continue;
+    }
+
+    if (!/^\d+$/.test(piece)) {
+      throw new Error(
+        `Invalid page specification "${piece}". Use page numbers and ranges, for example "1,3,5-7".`
+      );
+    }
+    pages.push(Number(piece));
+  }
+
+  if (pages.length === 0) {
+    throw new Error(
+      `No pages found in "${specification}". Use page numbers and ranges, for example "1,3,5-7".`
+    );
+  }
+
+  return pages;
+}
+
+/**
+ * Turn this tool's arguments into the `parameters` object that
+ * `/api/documents/bulk_edit/` actually expects.
+ *
+ * The tool's argument shape and the API's parameter shape are not the same, and
+ * the two places they differ were both silently broken until a live instance
+ * was asked:
+ *
+ *   * `set_permissions` takes `set_permissions`, `owner` and `merge` at the top
+ *     level of `parameters`. This tool groups them under a `permissions`
+ *     argument, which is the nicer surface — but it has to be flattened on the
+ *     way out. Passing it through nested means Paperless never sees
+ *     `set_permissions` at all: 3.1.3 answers 400 "set_permissions not
+ *     specified", and 2.16.0 indexes the missing key without checking and
+ *     answers 500. So this method had never once worked.
+ *   * `delete_pages` wants a list of integers, not the `1,3,5-7` string this
+ *     tool documents (`split`, which shares the same `pages` argument, *does*
+ *     want the string — Paperless expands it itself). Sending the string gets
+ *     400 "pages must be a list".
+ *
+ * Neither needed the zod schema to change, which is why the tool surface — and
+ * the committed snapshots of it — are untouched by the fix.
+ */
+export function buildBulkEditParameters(
+  method: string,
+  args: Record<string, any>
+): Record<string, any> {
+  // `permissions` is this tool's grouping and is never a wire field: drop it
+  // here and re-emit its contents flattened for the one method that uses them.
+  const { permissions, ...parameters } = args;
+
+  if (method === "set_permissions") {
+    if (permissions?.set_permissions === undefined) {
+      // Better than letting this reach Paperless: 2.16.0 turns it into an
+      // opaque 500 that reads like a server fault rather than a missing
+      // argument.
+      throw new Error(
+        "bulk_edit_documents with method 'set_permissions' requires the 'permissions' argument to include 'set_permissions' (the view/change users and groups)."
+      );
+    }
+
+    parameters.set_permissions = permissions.set_permissions;
+    if (permissions.owner !== undefined) parameters.owner = permissions.owner;
+    if (permissions.merge !== undefined) parameters.merge = permissions.merge;
+    return parameters;
+  }
+
+  if (method === "delete_pages" && typeof parameters.pages === "string") {
+    parameters.pages = expandPageSpecification(parameters.pages);
+  }
+
+  return parameters;
+}
+
 export function registerDocumentTools(server, api) {
   server.tool(
     "bulk_edit_documents",
@@ -53,8 +153,14 @@ export function registerDocumentTools(server, api) {
     },
     async (args, extra) => {
       if (!api) throw new Error("Please configure API connection first");
-      const { documents, method, ...parameters } = args;
-      return toTextResult(await api.bulkEditDocuments(documents, method, parameters));
+      const { documents, method, ...rest } = args;
+      return toTextResult(
+        await api.bulkEditDocuments(
+          documents,
+          method,
+          buildBulkEditParameters(method, rest)
+        )
+      );
     }
   );
 

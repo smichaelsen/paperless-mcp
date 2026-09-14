@@ -34,6 +34,15 @@ port="${PAPERLESS_IT_PORT:-8000}"
 base_url="http://localhost:${port}"
 admin_user="${PAPERLESS_IT_ADMIN_USER:-mcp-it-admin}"
 
+# The API version the client requests, read out of the client rather than
+# written down twice. A copy here would be wrong exactly once — on the commit
+# that moves the client to a new version — and would then quietly check the
+# wrong thing.
+REQUESTED_API_VERSION="$(
+  sed -n 's/^export const REQUESTED_API_VERSION = \([0-9]\{1,3\}\);.*/\1/p' \
+    "${repo_root}/src/api/apiVersion.ts"
+)"
+
 # How long each phase may take before the script gives up and says why.
 HEALTH_TIMEOUT="${PAPERLESS_IT_HEALTH_TIMEOUT:-420}"
 TOKEN_TIMEOUT="${PAPERLESS_IT_TOKEN_TIMEOUT:-180}"
@@ -115,9 +124,17 @@ wait_for_status() {
   echo "integration-stack: waiting for /api/status/ to report db+redis+celery OK (<= ${STATUS_TIMEOUT}s)"
   local deadline=$((SECONDS + STATUS_TIMEOUT)) body last=""
   while ((SECONDS < deadline)); do
+    # No `version=` in the Accept header on purpose. Readiness must not depend
+    # on the API version this client happens to negotiate: when upstream
+    # eventually retires version 9 — the single thing the drift job exists to
+    # discover — a pinned header would turn every poll into a 406, and this
+    # loop would spend its whole timeout and then blame Celery on a completely
+    # healthy instance. Without it Paperless serves its default version, so
+    # this measures what it claims to measure. The version itself is checked
+    # separately, and loudly, by check_api_version below.
     if body="$(curl -sS --fail --max-time 10 "${base_url}/api/status/" \
       -H "Authorization: Token ${token}" \
-      -H 'Accept: application/json; version=9' 2>/dev/null)"; then
+      -H 'Accept: application/json' 2>/dev/null)"; then
       # Only the three status strings are read out of the payload — the rest of
       # /api/status/ carries instance detail that has no business in a CI log.
       last="$(printf '%s' "${body}" | jq -r \
@@ -134,11 +151,54 @@ wait_for_status() {
   die "/api/status/ did not report all of database, Redis and Celery healthy within ${STATUS_TIMEOUT}s. The consumer would not be able to process an upload, so the suite would fail for the wrong reason."
 }
 
+# Does this instance still serve the API version the client asks for?
+#
+# This is the failure the drift job exists to find, so it gets its own check
+# and its own sentence rather than being left to surface as a timeout somewhere
+# else. Paperless answers 406 Not Acceptable to a version it does not support,
+# and — measured on 2.16.0 and 3.1.3 — that response carries no X-Api-Version
+# header, so the instance cannot be asked what it *would* have served.
+check_api_version() {
+  local token="$1" status
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+    "${base_url}/api/documents/?page_size=1" \
+    -H "Authorization: Token ${token}" \
+    -H "Accept: application/json; version=${REQUESTED_API_VERSION}" 2>/dev/null || echo "000")"
+
+  if [[ "${status}" == "406" ]]; then
+    die "this Paperless-ngx (${PAPERLESS_IT_VERSION}) refused API version ${REQUESTED_API_VERSION} with HTTP 406. It no longer serves the version this client requests, so the integration suite cannot pass against it. Either the client must move to a newer API version, or README.md's supported range needs its upper bound corrected."
+  fi
+  if [[ "${status}" != "200" ]]; then
+    die "a version-negotiated request to /api/documents/ answered HTTP ${status}, not 200. The instance is not usable by this client."
+  fi
+  echo "integration-stack: API version ${REQUESTED_API_VERSION} accepted"
+}
+
 cmd_up() {
   need docker
   need curl
   need jq
   : "${PAPERLESS_IT_VERSION:?set PAPERLESS_IT_VERSION to the Paperless-ngx tag under test, e.g. 3.1.3}"
+
+  # `up` is not idempotent, and the way it failed was actively misleading: a
+  # second `up` generated a *new* admin password while the superuser kept the
+  # first one (PAPERLESS_ADMIN_USER never changes an existing user's password),
+  # so /api/token/ rejected it for three minutes and then reported that the
+  # superuser had never been created. Reusing the password from the env file of
+  # the stack that is already running makes the re-run work instead.
+  if [[ -z "${PAPERLESS_IT_ADMIN_PASSWORD:-}" && -z "${PAPERLESS_IT_ADMIN_PASSWORD_FILE:-}" ]] &&
+    [[ -f "${env_file}" ]] && docker ps --quiet --filter "label=com.docker.compose.project=paperless-mcp-it" | grep -q .; then
+    local existing
+    # Sourced in a subshell rather than unquoted by hand: the file is written
+    # with printf %q, and re-parsing that with eval on a value this script did
+    # not choose is not a habit worth having.
+    existing="$(. "${env_file}" >/dev/null 2>&1; printf '%s' "${PAPERLESS_IT_ADMIN_PASSWORD:-}")"
+    if [[ -n "${existing}" ]]; then
+      PAPERLESS_IT_ADMIN_PASSWORD="${existing}"
+      export PAPERLESS_IT_ADMIN_PASSWORD
+      echo "integration-stack: a stack is already running; reusing its admin password so this re-run can authenticate"
+    fi
+  fi
 
   # The admin password is generated here unless the caller supplies one. That
   # keeps any credential out of the repository, out of the workflow file and
@@ -178,11 +238,21 @@ cmd_up() {
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then echo "::add-mask::${token}"; fi
 
   wait_for_status "${token}"
+  check_api_version "${token}"
 
   export_value PAPERLESS_TEST_URL "${base_url}"
   export_value PAPERLESS_TEST_TOKEN "${token}" secret
   export_value PAPERLESS_TEST_UPLOAD "1"
   export_value PAPERLESS_TEST_PAPERLESS_VERSION "${PAPERLESS_IT_VERSION}"
+
+  # Local only, and only so a second `up` against the same stack can
+  # authenticate instead of generating a password the superuser never had. The
+  # file already holds an API token, which is the stronger credential of the
+  # two, and is mode 600 and gitignored; in CI nothing is written at all.
+  if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
+    printf 'export %s=%q\n' PAPERLESS_IT_ADMIN_PASSWORD \
+      "${PAPERLESS_IT_ADMIN_PASSWORD}" >>"${env_file}"
+  fi
 
   echo "integration-stack: Paperless-ngx ${PAPERLESS_IT_VERSION} ready at ${base_url} in $((SECONDS - started))s"
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
@@ -214,6 +284,13 @@ cmd_test() {
   : "${PAPERLESS_TEST_URL:?is not set, so the integration suite would skip every test and still exit 0. Bring a stack up first (integration-stack.sh up), or stop calling this from a job that never started one.}"
 
   local report="${TMPDIR:-/tmp}/vitest-integration-report.json"
+  # Delete it first. Otherwise a previous run's report answers for this one:
+  # if vitest never gets far enough to write a new file, a stale
+  # `numPassedTests: 32` makes guard 2 wave through a run in which nothing
+  # executed — the exact failure this function exists to prevent, reintroduced
+  # by its own bookkeeping.
+  rm -f "${report}"
+
   local status=0
   npm run test:integration -- \
     --reporter=default --reporter=json --outputFile.json="${report}" || status=$?
