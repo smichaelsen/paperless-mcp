@@ -122,11 +122,18 @@ export function buildApiVersionError(
   ];
 
   if (serverApiVersion === null) {
+    // This is the branch that fires in practice. Measured against live 2.16.0
+    // and 3.1.3 instances (tests/integration): Paperless fails content
+    // negotiation before the middleware that stamps X-Api-Version and
+    // X-Version runs, so a 406 carries neither header no matter how the
+    // request was authenticated. Saying "only sends that header on
+    // authenticated requests" here — as this used to — sent people off to
+    // check a token that was never the problem.
     parts.push(
-      "The response carried no X-Api-Version header, so the API version of the instance could not be determined; Paperless-ngx only sends that header on authenticated requests."
+      "The response carried no X-Api-Version header, so the API version of the instance could not be determined: Paperless-ngx refuses the version before it adds that header, so a refusal never carries it."
     );
     parts.push(
-      `Check that the configured URL points at a Paperless-ngx instance of version ${MIN_SUPPORTED_PAPERLESS_VERSION} or newer and that the API token is valid.`
+      `Check that the configured URL points at a Paperless-ngx instance of version ${MIN_SUPPORTED_PAPERLESS_VERSION} or newer — releases before that do not offer API version ${REQUESTED_API_VERSION}.`
     );
   } else if (serverApiVersion < REQUESTED_API_VERSION) {
     parts.push(
