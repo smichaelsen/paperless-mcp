@@ -21,12 +21,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaperlessAPI } from "../api/PaperlessAPI";
-import type { ToolAccessMode } from "../config/toolAccess";
 import { registerCorrespondentTools } from "../tools/correspondents";
 import { registerDocumentTools } from "../tools/documents";
 import { registerDocumentTypeTools } from "../tools/documentTypes";
 import { registerTagTools } from "../tools/tags";
-import type { ToolShape } from "./toolPolicy";
+import type { EffectiveToolPolicy, ToolShape } from "./toolPolicy";
 import { gateRegistration, policyFor } from "./toolPolicy";
 
 export type { ToolShape };
@@ -118,13 +117,13 @@ export interface ToolRegistrar {
  * loses the keyword.
  *
  * The same adapter applies the access policy (`./toolPolicy`): a tool the
- * active mode does not allow is never handed to `registerTool`, so it is absent
- * from `tools/list` rather than advertised and refusing. `registered` counts
- * what survived, for the startup log line.
+ * effective policy does not allow is never handed to `registerTool`, so it is
+ * absent from `tools/list` rather than advertised and refusing. `registered`
+ * records the exact surface that survived.
  */
 export function closedSchemaRegistrar(
   server: McpServer,
-  mode: ToolAccessMode,
+  policy: EffectiveToolPolicy,
   registered: string[] = []
 ): ToolRegistrar {
   return {
@@ -140,7 +139,7 @@ export function closedSchemaRegistrar(
       const annotations = policyFor(name).annotations;
       const gated = gateRegistration(
         { name, description, shape, handler },
-        mode
+        policy
       );
       if (!gated) return;
 
@@ -159,31 +158,47 @@ export function closedSchemaRegistrar(
 }
 
 /**
- * Register the Paperless tool surface `mode` allows on `server`.
+ * Register the Paperless tool surface `policy` allows on `server`.
  *
- * `mode` is required rather than defaulting to `resolveToolAccess()`. Under
- * `--http` this runs once per connection, and resolving the mode here would
- * re-read the environment and repeat its warnings on every request — the same
- * reason the mode is not logged here. The caller resolves it once and passes it
- * in; see `src/index.ts`.
+ * `policy` is required rather than resolving configuration here. Under `--http`
+ * this runs once per connection, and reading the environment here would repeat
+ * configuration warnings on every request. The caller resolves and logs the
+ * policy once; see `src/index.ts`.
  */
 export function registerAllTools(
   server: McpServer,
   api: PaperlessAPI,
-  mode: ToolAccessMode
+  policy: EffectiveToolPolicy
 ): string[] {
   const registered: string[] = [];
   // The tool modules only ever call `server.tool(...)`; one of them declares
   // its parameter as `McpServer`, so the adapter is cast to satisfy it.
   const registrar = closedSchemaRegistrar(
     server,
-    mode,
+    policy,
     registered
   ) as unknown as McpServer;
   registerDocumentTools(registrar, api);
   registerTagTools(registrar, api);
   registerCorrespondentTools(registrar, api);
   registerDocumentTypeTools(registrar, api);
+
+  if (registered.length === 0) {
+    // McpServer installs tools/list lazily on the first registerTool() call.
+    // Without this disabled placeholder, an explicitly empty allowlist makes
+    // tools/list itself return "Method not found" instead of an empty list.
+    const placeholder = server.registerTool(
+      "paperless_mcp_empty_surface",
+      {
+        description: "Internal disabled placeholder for an empty tool surface.",
+        inputSchema: z.object({}).meta(CLOSED_OBJECT as never),
+      },
+      async () => {
+        throw new Error("This internal placeholder is disabled.");
+      }
+    );
+    placeholder.disable();
+  }
 
   // Deliberately not logged here: under `--http` a server is built per
   // connection, so logging the mode at registration time repeated the same

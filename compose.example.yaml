@@ -109,11 +109,13 @@ services:
       # healthcheck a 403.
       PAPERLESS_MCP_ALLOWED_HOSTS: "paperless-mcp,localhost,127.0.0.1,[::1]"
 
-      # Tool access mode. The default is read-only; widen it deliberately and
-      # only as far as you need. `PAPERLESS_ALLOW_DESTRUCTIVE` adds the tools
-      # that delete documents and is never implied by the line above it.
+      # Tool access mode. The default is read-only. Write or destructive mode
+      # also requires an exact tool allowlist, and bulk_edit_documents requires
+      # its own method allowlist. The access mode remains the outer boundary.
       # PAPERLESS_ALLOW_WRITES: "true"
       # PAPERLESS_ALLOW_DESTRUCTIVE: "true"
+      # PAPERLESS_MCP_ENABLED_TOOLS: "get_document,search_documents,update_document,bulk_edit_documents"
+      # PAPERLESS_MCP_BULK_EDIT_METHODS: "add_tag,remove_tag,set_correspondent"
 
     secrets:
       - paperless_token

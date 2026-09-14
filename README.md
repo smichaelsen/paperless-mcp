@@ -106,6 +106,8 @@ positional arguments are ignored.
 | `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
 | `PAPERLESS_ALLOW_WRITES` | Register the write-class tools. Off by default — see [Tool access modes](#tool-access-modes). |
 | `PAPERLESS_ALLOW_DESTRUCTIVE` | Register the destructive-class tools. Off by default, never implied by `PAPERLESS_ALLOW_WRITES`. |
+| `PAPERLESS_MCP_ENABLED_TOOLS` | Comma-separated exact MCP tool names. Required when write or destructive access is enabled; otherwise optional. |
+| `PAPERLESS_MCP_BULK_EDIT_METHODS` | Comma-separated `bulk_edit_documents` method names. Required when that tool would be enabled. |
 | `PAPERLESS_MCP_AUTH_TOKEN_FILE` | **`--http` only, required.** Path to a file containing the bearer secret clients must present. Takes precedence over `PAPERLESS_MCP_AUTH_TOKEN`. |
 | `PAPERLESS_MCP_AUTH_TOKEN` | `--http` only. The bearer secret inline. Prefer the `_FILE` form. |
 | `PAPERLESS_MCP_ALLOW_UNAUTHENTICATED` | `--http` only. Explicitly start **without** authentication. Refused unless the bind address is loopback. |
@@ -158,29 +160,59 @@ registered**, so it is absent from `tools/list` rather than advertised-and-refus
 — a model cannot ask for a tool it cannot see, and your client's allowlist has less
 to cover.
 
-| Mode | Start it with | Tools advertised |
+| Mode | Start it with | Maximum tools advertised |
 | --- | --- | --- |
 | **read-only** (default) | nothing to set | **9** |
-| **write** | `PAPERLESS_ALLOW_WRITES=true` or `--allow-writes` | **16** |
-| **destructive** | additionally `PAPERLESS_ALLOW_DESTRUCTIVE=true` or `--allow-destructive` | **20** |
+| **write** | `PAPERLESS_ALLOW_WRITES=true` or `--allow-writes`, plus a tool allowlist | **16** |
+| **destructive** | additionally `PAPERLESS_ALLOW_DESTRUCTIVE=true` or `--allow-destructive`, plus a tool allowlist | **20** |
 
 The flags may appear anywhere on the command line; they are not mistaken for the
 positional `<baseUrl> <token>`. Accepted true values are `1`, `true`, `yes`, `y`,
 `on`, `enable`, `enabled` (case-insensitive); anything unrecognized is treated as
 **off** and logged, because a typo must never widen what the server exposes.
 `PAPERLESS_ALLOW_DESTRUCTIVE` on its own also enables writes — every destructive
-operation is a write — and says so in the log. The active mode is logged once at
-startup:
+operation is a write — and says so in the log. The active mode and the exact
+effective names are logged once at startup:
 
 ```json
-{"level":"info","event":"tool_access_mode","mode":"write","writes":true,"destructive":false,"tools":16}
+{"level":"info","event":"tool_access_mode","mode":"write","writes":true,"destructive":false,"tools":3,"tool_names":"bulk_edit_documents,get_document,update_document","bulk_edit_methods":"add_tag,remove_tag"}
 ```
+
+### Server-side allowlists
+
+The access mode is the outer boundary. `PAPERLESS_MCP_ENABLED_TOOLS` then selects
+exact tool names inside that boundary, and `PAPERLESS_MCP_BULK_EDIT_METHODS`
+selects methods inside `bulk_edit_documents`. Neither allowlist can enable a name
+excluded by the mode. For example, listing `delete_tag` or the `delete` bulk
+method in write mode does not expose it.
+
+Write and destructive modes are deliberately fail-closed: setting either access
+switch without an explicit tool allowlist aborts startup. The read-only default
+keeps its existing nine tools when the variable is absent. In every mode, an
+explicitly empty tool allowlist exposes no tools. If `bulk_edit_documents`
+survives the mode and tool allowlist, its method allowlist is also required; an
+empty list, or one from which the mode removes every method, omits the tool.
+
+```env
+PAPERLESS_ALLOW_WRITES=true
+PAPERLESS_MCP_ENABLED_TOOLS=get_document,search_documents,list_tags,get_tag,update_document,bulk_edit_documents
+PAPERLESS_MCP_BULK_EDIT_METHODS=add_tag,remove_tag,set_correspondent,set_document_type
+```
+
+The equivalent CLI flags are `--enabled-tools <comma-separated-names>` and
+`--bulk-edit-methods <comma-separated-names>`; `--flag=value` also works. A CLI
+value takes precedence over its environment equivalent. Unknown names, duplicate
+entries, empty entries such as `get_document,,get_tag`, malformed names, repeated
+flags and flags without values abort startup instead of guessing. Whitespace around
+comma-separated entries is ignored.
 
 ### `bulk_edit_documents`
 
 The one tool whose destructiveness depends on an argument: the same `method` enum
-spans setting a correspondent and permanently deleting documents. In write mode it is
-therefore **narrowed** — `method` offers only
+spans setting a correspondent and permanently deleting documents. The selected
+method allowlist is advertised as the exact `method` enum and enforced again in
+the handler, so a client cannot bypass it by skipping schema validation. In write
+mode the access policy first narrows the available methods to
 `set_correspondent`, `set_document_type`, `set_storage_path`, `add_tag`,
 `remove_tag`, `modify_tags`, `reprocess`, `merge`, `split` and `rotate`, while
 `delete`, `delete_pages` and `set_permissions` are neither advertised nor accepted by
@@ -188,8 +220,8 @@ the handler. The `delete_originals` and `permissions` arguments are gone from th
 schema and `merge`/`split` are sent with an explicit `delete_originals: false`, so
 they create a new document and leave the originals in place. `pages` stays because
 Paperless requires it to `split`; on its own it does nothing, since the method that
-would delete pages is not reachable. `PAPERLESS_ALLOW_DESTRUCTIVE` brings the full
-enum and all arguments back.
+would delete pages is not reachable. Destructive mode makes the remaining methods
+and arguments eligible, but only explicitly allowlisted methods are exposed.
 
 Two of its arguments are reshaped before they go to Paperless, because the tool's
 surface and the API's payload disagree. `set_permissions` takes its settings under a
@@ -203,14 +235,14 @@ asserted against live 2.16.0 and 3.1.3 instances in the integration suite.
 
 ### Client allowlist and approval policy
 
-Server-side gating decides what *exists*; the client's allowlist decides what runs
-without asking. Run the narrowest mode each client needs rather than one permissive
-server for everything: read-only for an assistant that answers questions about your
-documents, `--allow-writes` for one that files and tags incoming mail,
-`--allow-destructive` plus an allowlist of nothing for a cleanup session. Give the
-server its own Paperless account with only the permissions it needs — the access mode
-is a guard rail in this process; the Paperless permission model is the one an attacker
-cannot argue with.
+Server-side gating decides what *exists*. A client-side allowlist remains useful for
+deciding what a model sees or can run without asking, but it is not a security
+boundary: any client holding the MCP credential can call every tool the server
+registered. Run the narrowest mode and server allowlists each client needs: read-only
+for an assistant that answers questions about documents, or write mode with only the
+filing and tagging tools and methods it uses. Give the server its own Paperless
+account with only the permissions it needs; Paperless permissions remain the final
+authorization boundary.
 
 The read class is the only one worth auto-approving, and read-only is still not the
 same as harmless: `search_documents` and `download_document` return the contents of
@@ -274,8 +306,10 @@ instance does not support the requested REST API version (see
 
 ## Running the MCP Server
 
-Both transports honour `--allow-writes` and `--allow-destructive` (and their
-environment equivalents); without them the server is read-only.
+Both transports honour the access switches and server-side allowlists through CLI
+flags or their environment equivalents. Without an access switch the server is
+read-only; enabling write or destructive access also requires `--enabled-tools` or
+`PAPERLESS_MCP_ENABLED_TOOLS`.
 
 ### stdio (default)
 

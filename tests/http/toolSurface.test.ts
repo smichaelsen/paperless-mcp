@@ -13,6 +13,7 @@ import { toolAccessMode } from "../../src/config/toolAccess";
 import { createMcpHttpApp } from "../../src/http/app";
 import { DEFAULT_ALLOWED_HOSTS } from "../../src/http/security";
 import { registerAllTools } from "../../src/mcp/registerTools";
+import { fullPolicyInMode } from "../tools/modeHarness";
 import { connectClient, createBarrier, NO_AUTH, RunningApp, startApp } from "./harness";
 
 const PAPERLESS_URL = "https://paperless.example.invalid";
@@ -79,7 +80,11 @@ describe("concurrent clients on the real tool surface", () => {
             name: "paperless-ngx",
             version: "1.0.0",
           });
-          registerAllTools(server, api, toolAccessMode(true, true));
+          registerAllTools(
+            server,
+            api,
+            fullPolicyInMode(toolAccessMode(true, true))
+          );
           return server;
         },
         security: SECURITY,
@@ -117,7 +122,7 @@ describe("concurrent clients on the real tool surface", () => {
           name: "paperless-ngx",
           version: "1.0.0",
         });
-        registerAllTools(server, api, mode);
+        registerAllTools(server, api, fullPolicyInMode(mode));
         return server;
       };
 

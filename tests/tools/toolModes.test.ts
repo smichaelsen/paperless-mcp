@@ -15,6 +15,7 @@ import {
   BULK_EDIT_WRITE_METHODS,
   gateBulkEditDocuments,
   policyFor,
+  resolveEffectiveToolPolicy,
 } from "../../src/mcp/toolPolicy";
 import { jsonResponse, mockFetch } from "../helpers/fetchMock";
 import {
@@ -23,7 +24,10 @@ import {
   collectEnumValues,
   collectPropertyNames,
   connectInMode,
+  connectWithPolicy,
+  fullPolicyInMode,
   toolNamesInMode,
+  toolNamesWithPolicy,
 } from "./modeHarness";
 
 /** Available in every mode, including the default. */
@@ -185,6 +189,36 @@ describe("tool surface per mode", () => {
   });
 });
 
+describe("exact tool allowlist", () => {
+  it("advertises only selected names that the mode permits", async () => {
+    const policy = resolveEffectiveToolPolicy(MODES.write, {
+      enabledTools: ["get_document", "update_document", "delete_tag"],
+      bulkEditMethods: [],
+    });
+
+    expect(await toolNamesWithPolicy(policy)).toEqual([
+      "get_document",
+      "update_document",
+    ]);
+  });
+
+  it("can advertise no tools at all", async () => {
+    const policy = resolveEffectiveToolPolicy(MODES.destructive, {
+      enabledTools: [],
+      bulkEditMethods: [],
+    });
+    const client = await connectWithPolicy(policy);
+
+    expect((await client.listTools()).tools).toEqual([]);
+    const hidden: any = await client.callTool({
+      name: "paperless_mcp_empty_surface",
+      arguments: {},
+    });
+    await client.close();
+    expect(hidden.isError).toBe(true);
+  });
+});
+
 describe("MCP annotations", () => {
   for (const [label, mode] of Object.entries(MODES)) {
     it(`annotates every tool advertised in ${label} mode`, async () => {
@@ -260,6 +294,49 @@ describe("structural guards", () => {
 });
 
 describe("bulk_edit_documents, whose destructiveness is an argument", () => {
+  it("advertises and accepts only the selected methods", async () => {
+    const policy = resolveEffectiveToolPolicy(MODES.write, {
+      enabledTools: ["bulk_edit_documents"],
+      bulkEditMethods: ["add_tag", "remove_tag"],
+    });
+    const fetchMock = mockFetch(() => jsonResponse({ result: "OK" }));
+    const client = await connectWithPolicy(policy);
+
+    const { tools } = await client.listTools();
+    const schema = tools.find((tool) => tool.name === "bulk_edit_documents")!
+      .inputSchema as any;
+    expect(schema.properties.method.enum).toEqual(["add_tag", "remove_tag"]);
+
+    const result: any = await client.callTool({
+      name: "bulk_edit_documents",
+      arguments: { documents: [1], method: "add_tag", tag: 5 },
+    });
+    await client.close();
+
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(String(fetchMock.only().init.body)).method).toBe(
+      "add_tag"
+    );
+  });
+
+  it("describes only the selected methods in destructive mode", async () => {
+    const policy = resolveEffectiveToolPolicy(MODES.destructive, {
+      enabledTools: ["bulk_edit_documents"],
+      bulkEditMethods: ["set_permissions"],
+    });
+    const client = await connectWithPolicy(policy);
+
+    const { tools } = await client.listTools();
+    await client.close();
+    const tool = tools.find((item) => item.name === "bulk_edit_documents")!;
+
+    expect(tool.description).toContain("Enabled methods: set_permissions.");
+    expect(tool.description).not.toMatch(/delete|merge|split|rotate/);
+    expect((tool.inputSchema as any).properties.method.enum).toEqual([
+      "set_permissions",
+    ]);
+  });
+
   it("offers only the non-destructive methods in write mode", async () => {
     const client = await connectInMode(MODES.write);
     const { tools } = await client.listTools();
@@ -415,13 +492,19 @@ describe("the bulk_edit_documents gate itself", () => {
 
   it("removes the tool entirely when writes are disabled", () => {
     expect(
-      gateBulkEditDocuments(registration, toolAccessMode(false, false))
+      gateBulkEditDocuments(
+        registration,
+        fullPolicyInMode(toolAccessMode(false, false))
+      )
     ).toBeNull();
   });
 
   it("passes the declaration through untouched in destructive mode", () => {
     expect(
-      gateBulkEditDocuments(registration, toolAccessMode(true, true))
+      gateBulkEditDocuments(
+        registration,
+        fullPolicyInMode(toolAccessMode(true, true))
+      )
     ).toBe(registration);
   });
 
@@ -430,7 +513,7 @@ describe("the bulk_edit_documents gate itself", () => {
     // that only narrowed the schema would be one refactor away from useless.
     const gated = gateBulkEditDocuments(
       registration,
-      toolAccessMode(true, false)
+      fullPolicyInMode(toolAccessMode(true, false))
     )!;
 
     await expect(
@@ -452,7 +535,7 @@ describe("the bulk_edit_documents gate itself", () => {
     const inner = vi.fn(async (args: any) => args);
     const gated = gateBulkEditDocuments(
       { ...registration, handler: inner },
-      toolAccessMode(true, false)
+      fullPolicyInMode(toolAccessMode(true, false))
     )!;
 
     await gated.handler({ documents: [1, 2], method: "merge" }, {});
@@ -461,6 +544,23 @@ describe("the bulk_edit_documents gate itself", () => {
       { documents: [1, 2], method: "merge", delete_originals: false },
       {}
     );
+  });
+
+  it("refuses an excluded method when schema validation is bypassed", async () => {
+    const inner = vi.fn(async (args: any) => args);
+    const policy = resolveEffectiveToolPolicy(toolAccessMode(true, true), {
+      enabledTools: ["bulk_edit_documents"],
+      bulkEditMethods: ["add_tag"],
+    });
+    const gated = gateBulkEditDocuments(
+      { ...registration, handler: inner },
+      policy
+    )!;
+
+    await expect(
+      gated.handler({ documents: [1], method: "delete" }, {})
+    ).rejects.toThrow(/not enabled/);
+    expect(inner).not.toHaveBeenCalled();
   });
 });
 

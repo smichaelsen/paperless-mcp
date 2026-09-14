@@ -12,7 +12,12 @@ import {
   describeAuth,
   resolveHttpAuth,
 } from "./config/httpAuth";
+import {
+  resolveConfiguredToolAllowlists,
+  TOOL_ALLOWLIST_VALUE_FLAGS,
+} from "./config/toolAllowlist";
 import { resolveToolAccess } from "./config/toolAccess";
+import { logEffectiveToolPolicy } from "./config/toolPolicyLog";
 import { createMcpHttpApp } from "./http/app";
 import {
   BIND_ADDRESS_ENV,
@@ -25,6 +30,7 @@ import { describeAllowlist, resolveHttpSecurity } from "./http/security";
 import { ENABLE_LEGACY_SSE_ENV, legacySseEnabled } from "./http/legacyFlag";
 import { log, logFatal, registerSecret } from "./logging";
 import { registerAllTools } from "./mcp/registerTools";
+import { resolveEffectiveToolPolicy } from "./mcp/toolPolicy";
 
 // Simple CLI argument parsing
 const args = process.argv.slice(2);
@@ -51,6 +57,15 @@ const SERVER_VERSION = "0.1.1";
 async function main() {
   installProcessErrorHandlers();
 
+  // Resolve and validate the complete tool policy before constructing a
+  // transport. Invalid allowlists therefore fail startup rather than waiting
+  // for the first HTTP client to connect.
+  const toolAccess = resolveToolAccess(process.env, args);
+  const toolPolicy = resolveEffectiveToolPolicy(
+    toolAccess,
+    resolveConfiguredToolAllowlists(process.env, args)
+  );
+
   let baseUrl: string | undefined;
   let token: string | undefined;
 
@@ -68,10 +83,13 @@ async function main() {
     // --allow-writes` with credentials in the environment would take the flag
     // as the base URL, discard PAPERLESS_URL, pass the usage check below, and
     // then fail every single request with an ERR_INVALID_URL only visible in
-    // stderr. The value after `--port` is skipped with it.
+    // stderr. Values belonging to `--port` or either allowlist flag are skipped
+    // with their flags.
+    const valueFlags = new Set(["--port", ...TOOL_ALLOWLIST_VALUE_FLAGS]);
     const positional = args.filter(
       (arg, index) =>
-        !arg.startsWith("--") && !(index > 0 && args[index - 1] === "--port")
+        !arg.startsWith("--") &&
+        !(index > 0 && valueFlags.has(args[index - 1]))
     );
     baseUrl = positional[0] || process.env.PAPERLESS_URL;
     // Resolved lazily: a positional token wins, and `||` short-circuits, so a
@@ -80,7 +98,7 @@ async function main() {
     token = positional[1] || resolvePaperlessToken(process.env)?.value;
     if (!baseUrl || !token) {
       console.error(
-        "Usage: paperless-mcp <baseUrl> <token> [--http] [--port <port>] [--allow-writes] [--allow-destructive]"
+        "Usage: paperless-mcp <baseUrl> <token> [--http] [--port <port>] [--allow-writes] [--allow-destructive] [--enabled-tools <names>] [--bulk-edit-methods <names>]"
       );
       console.error(
         "Example: paperless-mcp http://localhost:8000 your-api-token --http --port 3000"
@@ -92,33 +110,15 @@ async function main() {
 
   registerSecret(token);
 
+  logEffectiveToolPolicy(toolPolicy);
+
   // The API client is stateless and safe to share: it holds a base URL and a
   // token and keeps no per-client state. The MCP server is not — it stores the
   // transport it is connected to — so it is built per connection instead.
   const api = new PaperlessAPI(baseUrl, token);
-  // Resolved once, not per connection: the access mode cannot change while the
-  // process runs, and re-resolving it would repeat its warnings on every
-  // request.
-  const toolAccess = resolveToolAccess();
-  // The advertised surface is identical for every connection, so it is logged
-  // once per process rather than from inside registration — which under `--http`
-  // runs per request and would repeat this line on every one. Under `--http`
-  // that means the line lands on the first connection, not at listen time,
-  // because no server exists until then. The flag is scoped to this `main()`
-  // call; moving `createServer` out of it would need the flag to move too.
-  let modeLogged = false;
   const createServer = (): McpServer => {
     const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-    const registered = registerAllTools(server, api, toolAccess);
-    if (!modeLogged) {
-      modeLogged = true;
-      log("info", "tool_access_mode", {
-        mode: toolAccess.label,
-        writes: toolAccess.writes,
-        destructive: toolAccess.destructive,
-        tools: registered.length,
-      });
-    }
+    registerAllTools(server, api, toolPolicy);
     return server;
   };
 
