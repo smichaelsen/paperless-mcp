@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PaperlessAPI } from "../../src/api/PaperlessAPI";
 import { toolAccessMode } from "../../src/config/toolAccess";
 import { registerAllTools } from "../../src/mcp/registerTools";
+import { fullPolicyInMode } from "./modeHarness";
 import { jsonResponse, mockFetch } from "../helpers/fetchMock";
 
 const BASE_URL = "https://paperless.example.invalid";
@@ -26,7 +27,7 @@ beforeEach(async () => {
   // The same registration path src/index.ts uses. This suite is about the
   // transport and the schemas, so it asks for the widest mode; which tools each
   // mode exposes is tests/tools/toolModes.test.ts.
-  registerAllTools(server, api, toolAccessMode(true, true));
+  registerAllTools(server, api, fullPolicyInMode(toolAccessMode(true, true)));
 
   client = new Client({ name: "test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] =

@@ -4,8 +4,8 @@
  * This table is the single place where "what does this tool do to Paperless?"
  * is decided. `registerAllTools` consults it for two things:
  *
- * 1. whether the tool may be registered at all in the active mode
- *    (`src/config/toolAccess.ts`), and
+ * 1. whether the tool may be registered under the active mode and exact-name
+ *    allowlist, and
  * 2. the `annotations` advertised for it in `tools/list`.
  *
  * A tool that is not listed here cannot be registered: registration throws
@@ -27,6 +27,7 @@
  */
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import type { ConfiguredToolAllowlists } from "../config/toolAllowlist";
 import type { ToolAccess, ToolAccessMode } from "../config/toolAccess";
 import { allows } from "../config/toolAccess";
 
@@ -43,13 +44,20 @@ export interface ToolRegistration {
   handler: (args: any, extra: any) => Promise<any>;
 }
 
+/** The complete, already validated policy used by every registration. */
+export interface EffectiveToolPolicy {
+  mode: ToolAccessMode;
+  enabledTools: readonly string[];
+  bulkEditMethods: readonly string[];
+}
+
 /**
  * A gate may rewrite a registration for the active mode, or return `null` to
  * keep the tool out of `tools/list` entirely.
  */
 export type ToolGate = (
   registration: ToolRegistration,
-  mode: ToolAccessMode
+  policy: EffectiveToolPolicy
 ) => ToolRegistration | null;
 
 export interface ToolPolicy {
@@ -170,6 +178,23 @@ const WRITE_METHOD_DESCRIPTION =
   "rotate (adjust orientation). Deleting documents or pages and replacing permissions " +
   "are not available: this server was not started with destructive operations enabled.";
 
+function selectedMethodDescription(methods: readonly string[]): string {
+  return (
+    `The enabled bulk operations are: ${methods.join(", ")}. ` +
+    "Any other bulk-edit method is disabled by the server policy."
+  );
+}
+
+function sameNames(
+  left: readonly string[],
+  right: readonly string[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((name) => right.includes(name))
+  );
+}
+
 function isDestructiveMethod(method: unknown): boolean {
   return (BULK_EDIT_DESTRUCTIVE_METHODS as readonly string[]).includes(
     String(method)
@@ -183,59 +208,87 @@ function isDestructiveMethod(method: unknown): boolean {
  * everything the destructive switch is supposed to hold back; refusing at call
  * time would leave a destructive tool advertised.
  *
- * So in write mode the tool is registered with a **narrowed** contract: the
- * `method` enum only offers the non-destructive methods, and the arguments that
- * exist solely to delete (`delete_originals`) or to replace permissions are
- * dropped from the schema. The handler re-checks both, so a client that ignores
- * the schema is refused rather than obeyed, and `merge`/`split` are forwarded
- * with an explicit `delete_originals: false` instead of relying on the
- * Paperless default.
+ * The mode and method allowlist therefore produce one narrowed contract. In
+ * write mode, destructive methods and arguments are removed first. The method
+ * enum is then reduced to the explicitly selected operations in either mode.
+ * The handler re-checks both boundaries, so a client that ignores the schema is
+ * refused rather than obeyed, and write-mode `merge`/`split` calls are forwarded
+ * with an explicit `delete_originals: false` instead of relying on the Paperless
+ * default.
  *
  * `pages` stays, redescribed: `split` cannot work without it. See
  * {@link BULK_EDIT_DESTRUCTIVE_ARGS}.
  */
-export const gateBulkEditDocuments: ToolGate = (registration, mode) => {
+export const gateBulkEditDocuments: ToolGate = (registration, policy) => {
+  const { mode } = policy;
   if (!mode.writes) return null;
-  if (mode.destructive) return registration;
+  const methods = policy.bulkEditMethods;
+  if (methods.length === 0) return null;
+
+  const allMethods = [
+    ...BULK_EDIT_WRITE_METHODS,
+    ...BULK_EDIT_DESTRUCTIVE_METHODS,
+  ];
+  if (mode.destructive && sameNames(methods, allMethods)) return registration;
 
   const rest: ToolShape = { ...registration.shape };
   delete rest.documents;
   delete rest.method;
-  for (const argument of BULK_EDIT_DESTRUCTIVE_ARGS) delete rest[argument];
-  // Assigning an existing key keeps its position, so the argument order the
-  // snapshot records does not shift.
-  if (rest.pages) rest.pages = rest.pages.describe(WRITE_PAGES_DESCRIPTION);
+  if (!mode.destructive) {
+    for (const argument of BULK_EDIT_DESTRUCTIVE_ARGS) delete rest[argument];
+    // Assigning an existing key keeps its position, so the argument order the
+    // snapshot records does not shift.
+    if (rest.pages) rest.pages = rest.pages.describe(WRITE_PAGES_DESCRIPTION);
+  }
+
+  const allWriteMethods = sameNames(methods, BULK_EDIT_WRITE_METHODS);
 
   return {
     ...registration,
     description:
-      "Perform bulk metadata operations on multiple documents simultaneously: " +
-      "set correspondent/type/storage path, manage tags, reprocess, rotate, merge or split. " +
-      "Deletion, page removal and permission changes are not available in this mode.",
+      !mode.destructive && allWriteMethods
+        ? "Perform bulk metadata operations on multiple documents simultaneously: " +
+          "set correspondent/type/storage path, manage tags, reprocess, rotate, merge or split. " +
+          "Deletion, page removal and permission changes are not available in this mode."
+        : "Perform selected bulk operations on multiple documents simultaneously. " +
+          `Enabled methods: ${methods.join(", ")}.`,
     shape: {
       documents: registration.shape.documents,
       method: z
-        .enum(BULK_EDIT_WRITE_METHODS as unknown as [string, ...string[]])
-        .describe(WRITE_METHOD_DESCRIPTION),
+        .enum(methods as unknown as [string, ...string[]])
+        .describe(
+          !mode.destructive && allWriteMethods
+            ? WRITE_METHOD_DESCRIPTION
+            : selectedMethodDescription(methods)
+        ),
       ...rest,
     },
     handler: async (args: any, extra: any) => {
       if (isDestructiveMethod(args?.method)) {
+        if (!mode.destructive) {
+          throw new Error(
+            `bulk_edit_documents method '${args.method}' is a destructive operation and is not enabled on this server.`
+          );
+        }
+      }
+      if (!methods.includes(String(args?.method))) {
         throw new Error(
-          `bulk_edit_documents method '${args.method}' is a destructive operation and is not enabled on this server.`
+          `bulk_edit_documents method '${String(args?.method)}' is not enabled on this server.`
         );
       }
-      if (args?.delete_originals) {
+      if (!mode.destructive && args?.delete_originals) {
         throw new Error(
           "bulk_edit_documents cannot delete the original documents: destructive operations are not enabled on this server."
         );
       }
       const safeArgs = { ...args };
-      for (const argument of BULK_EDIT_DESTRUCTIVE_ARGS) {
-        delete safeArgs[argument];
-      }
-      if (safeArgs.method === "merge" || safeArgs.method === "split") {
-        safeArgs.delete_originals = false;
+      if (!mode.destructive) {
+        for (const argument of BULK_EDIT_DESTRUCTIVE_ARGS) {
+          delete safeArgs[argument];
+        }
+        if (safeArgs.method === "merge" || safeArgs.method === "split") {
+          safeArgs.delete_originals = false;
+        }
       }
       return registration.handler(safeArgs, extra);
     },
@@ -283,6 +336,88 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
   bulk_edit_document_types: { access: "destructive", annotations: REPLACES },
 };
 
+function rejectUnknownNames(
+  names: readonly string[] | undefined,
+  known: ReadonlySet<string>,
+  setting: string
+): void {
+  if (!names) return;
+  const unknown = names.filter((name) => !known.has(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `${setting} contains unknown ${unknown.length === 1 ? "name" : "names"}: ${unknown.join(", ")}.`
+    );
+  }
+}
+
+/**
+ * Intersect the configured allowlists with the coarse access mode. An
+ * allowlist can remove capabilities, but it can never add a tool or method the
+ * mode excludes.
+ */
+export function resolveEffectiveToolPolicy(
+  mode: ToolAccessMode,
+  configured: ConfiguredToolAllowlists
+): EffectiveToolPolicy {
+  const knownTools = new Set(Object.keys(TOOL_POLICIES));
+  const allBulkMethods = [
+    ...BULK_EDIT_WRITE_METHODS,
+    ...BULK_EDIT_DESTRUCTIVE_METHODS,
+  ];
+  const knownBulkMethods = new Set<string>(allBulkMethods);
+
+  rejectUnknownNames(
+    configured.enabledTools,
+    knownTools,
+    "The tool allowlist"
+  );
+  rejectUnknownNames(
+    configured.bulkEditMethods,
+    knownBulkMethods,
+    "The bulk-edit method allowlist"
+  );
+
+  if (mode.writes && configured.enabledTools === undefined) {
+    throw new Error(
+      "Write or destructive access requires an explicit PAPERLESS_MCP_ENABLED_TOOLS or --enabled-tools allowlist."
+    );
+  }
+
+  const requestedTools =
+    configured.enabledTools ?? Object.keys(TOOL_POLICIES);
+  let enabledTools = requestedTools.filter((name) =>
+    allows(mode, policyFor(name).access)
+  );
+
+  let bulkEditMethods: readonly string[] = [];
+  if (enabledTools.includes("bulk_edit_documents")) {
+    if (configured.bulkEditMethods === undefined) {
+      throw new Error(
+        "Enabling bulk_edit_documents requires an explicit PAPERLESS_MCP_BULK_EDIT_METHODS or --bulk-edit-methods allowlist."
+      );
+    }
+    bulkEditMethods = configured.bulkEditMethods.filter(
+      (method) =>
+        mode.destructive ||
+        (BULK_EDIT_WRITE_METHODS as readonly string[]).includes(method)
+    );
+
+    // A selected tool with no permitted operations has no truthful schema.
+    // Keep it out of tools/list rather than inventing an empty zod enum.
+    if (bulkEditMethods.length === 0) {
+      enabledTools = enabledTools.filter(
+        (name) => name !== "bulk_edit_documents"
+      );
+    }
+  }
+
+  return Object.freeze({
+    mode,
+    enabledTools: Object.freeze([...enabledTools].sort()),
+    bulkEditMethods: Object.freeze([...bulkEditMethods]),
+  });
+}
+
 /** Look up a tool's policy, refusing to register anything unclassified. */
 export function policyFor(name: string): ToolPolicy {
   const policy = TOOL_POLICIES[name];
@@ -295,14 +430,16 @@ export function policyFor(name: string): ToolPolicy {
 }
 
 /**
- * Apply the policy for `registration` in `mode`: the registration to advertise,
- * or `null` when the tool must stay absent from `tools/list`.
+ * Apply `effective` to a registration: return what should be advertised, or
+ * `null` when the tool must stay absent from `tools/list`.
  */
 export function gateRegistration(
   registration: ToolRegistration,
-  mode: ToolAccessMode
+  effective: EffectiveToolPolicy
 ): ToolRegistration | null {
+  if (!effective.enabledTools.includes(registration.name)) return null;
+
   const policy = policyFor(registration.name);
-  if (policy.gate) return policy.gate(registration, mode);
-  return allows(mode, policy.access) ? registration : null;
+  if (policy.gate) return policy.gate(registration, effective);
+  return allows(effective.mode, policy.access) ? registration : null;
 }

@@ -16,6 +16,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PaperlessAPI } from "../../src/api/PaperlessAPI";
 import { toolAccessMode } from "../../src/config/toolAccess";
 import { registerAllTools } from "../../src/mcp/registerTools";
+import { fullPolicyInMode } from "./modeHarness";
 
 const MODES = [
   ["read-only", toolAccessMode(false, false), 9],
@@ -26,7 +27,7 @@ const MODES = [
 function build(mode: ReturnType<typeof toolAccessMode>): string[] {
   const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
   const api = new PaperlessAPI("https://paperless.example", "s3cr3t-token");
-  return registerAllTools(server, api, mode);
+  return registerAllTools(server, api, fullPolicyInMode(mode));
 }
 
 describe("registerAllTools logging", () => {
@@ -71,7 +72,7 @@ describe("registerAllTools logging", () => {
   });
 
   it.each(MODES)(
-    "returns the %s surface so the caller can log the count once",
+    "returns the exact %s surface for callers that inspect registration",
     (_label, mode, expected) => {
       const registered = build(mode);
       expect(registered).toHaveLength(expected);

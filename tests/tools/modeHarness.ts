@@ -10,6 +10,13 @@ import { PaperlessAPI } from "../../src/api/PaperlessAPI";
 import { toolAccessMode } from "../../src/config/toolAccess";
 import type { ToolAccessMode } from "../../src/config/toolAccess";
 import { registerAllTools } from "../../src/mcp/registerTools";
+import {
+  BULK_EDIT_DESTRUCTIVE_METHODS,
+  BULK_EDIT_WRITE_METHODS,
+  type EffectiveToolPolicy,
+  resolveEffectiveToolPolicy,
+  TOOL_POLICIES,
+} from "../../src/mcp/toolPolicy";
 
 export const BASE_URL = "https://paperless.example.invalid";
 
@@ -20,10 +27,27 @@ export const MODES: Record<string, ToolAccessMode> = {
   destructive: toolAccessMode(true, true),
 };
 
+/** Explicitly allow the whole surface a mode permits. */
+export function fullPolicyInMode(mode: ToolAccessMode) {
+  return resolveEffectiveToolPolicy(mode, {
+    enabledTools: Object.keys(TOOL_POLICIES),
+    bulkEditMethods: [
+      ...BULK_EDIT_WRITE_METHODS,
+      ...BULK_EDIT_DESTRUCTIVE_METHODS,
+    ],
+  });
+}
+
 export async function connectInMode(mode: ToolAccessMode): Promise<Client> {
+  return connectWithPolicy(fullPolicyInMode(mode));
+}
+
+export async function connectWithPolicy(
+  policy: EffectiveToolPolicy
+): Promise<Client> {
   const api = new PaperlessAPI(BASE_URL, "s3cr3t-token-value");
   const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
-  registerAllTools(server, api, mode);
+  registerAllTools(server, api, policy);
 
   const client = new Client({ name: "mode-test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] =
@@ -38,6 +62,17 @@ export async function connectInMode(mode: ToolAccessMode): Promise<Client> {
 /** Sorted tool names advertised in `mode`. */
 export async function toolNamesInMode(mode: ToolAccessMode): Promise<string[]> {
   const client = await connectInMode(mode);
+  return toolNamesFromClient(client);
+}
+
+export async function toolNamesWithPolicy(
+  policy: EffectiveToolPolicy
+): Promise<string[]> {
+  const client = await connectWithPolicy(policy);
+  return toolNamesFromClient(client);
+}
+
+async function toolNamesFromClient(client: Client): Promise<string[]> {
   try {
     const { tools } = await client.listTools();
     return tools.map((tool) => tool.name).sort();
