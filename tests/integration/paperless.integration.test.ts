@@ -17,6 +17,7 @@
  * will ever notice.
  */
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PaperlessAPI } from "../../src/api/PaperlessAPI";
 import {
@@ -46,6 +47,34 @@ const fixtureName = (what: string) => `${runId}-${what}`;
  * the tokenizer splits on the hyphens and the search stops being unique.
  */
 const searchNonce = `mcpit${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+
+/**
+ * Every `method` the `bulk_edit_documents` tool advertises, read out of the
+ * committed tool snapshot rather than copied into a list here.
+ *
+ * #12's review flagged that API v10 moved merge/rotate/edit_pdf onto their own
+ * endpoints and deprecated the bulk path this client still uses, which makes
+ * that enum a standing claim about the server. A hand-maintained copy would
+ * drift the first time someone adds a method to the tool and forgets this
+ * file — and the new method would then be the one nothing checked. Taking it
+ * from the snapshot means the live coverage follows the advertised surface
+ * automatically.
+ */
+const advertisedBulkEditMethods: string[] = (() => {
+  const snapshot = new URL(
+    "../tools/__snapshots__/tools-list.destructive.json",
+    import.meta.url
+  );
+  const tools = JSON.parse(readFileSync(snapshot, "utf8"));
+  const methods = tools.find((tool: any) => tool.name === "bulk_edit_documents")
+    ?.inputSchema?.properties?.method?.enum;
+  if (!Array.isArray(methods) || methods.length === 0) {
+    throw new Error(
+      "could not read the bulk_edit_documents method enum out of tests/tools/__snapshots__/tools-list.destructive.json"
+    );
+  }
+  return methods;
+})();
 
 const createdTags: number[] = [];
 const createdCorrespondents: number[] = [];
@@ -395,27 +424,7 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
   });
 
   describe("bulk edit endpoints", () => {
-    // Every method the bulk_edit_documents tool advertises. #12's review
-    // flagged that API v10 moved merge/rotate/edit_pdf onto their own
-    // endpoints and deprecated the bulk path we still use, so the enum is a
-    // standing claim about the server that nothing verified.
-    const advertisedMethods = [
-      "set_correspondent",
-      "set_document_type",
-      "set_storage_path",
-      "add_tag",
-      "remove_tag",
-      "modify_tags",
-      "delete",
-      "reprocess",
-      "set_permissions",
-      "merge",
-      "split",
-      "rotate",
-      "delete_pages",
-    ];
-
-    it.each(advertisedMethods)(
+    it.each(advertisedBulkEditMethods)(
       "still recognises bulk_edit method %s",
       async (method) => {
         // An empty document list mutates nothing, so this probes the method
