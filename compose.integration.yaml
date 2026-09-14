@@ -59,6 +59,41 @@ services:
       PAPERLESS_TIME_ZONE: UTC
       PAPERLESS_OCR_LANGUAGE: eng
 
+      # Give SQLite a real busy timeout. This is the single most important
+      # setting in this file for keeping the lane non-flaky.
+      #
+      # SQLite takes one writer at a time, and this stack has two of them: the
+      # webserver handling the suite's requests, and the Celery worker
+      # consuming the uploaded documents. Without a generous busy timeout a
+      # request that arrives while the consumer is mid-write does not wait, it
+      # fails — "database is locked" — and the suite goes red for a reason that
+      # has nothing to do with the client under test. Left unset, the timeout
+      # falls back to the 5s default that Python's sqlite3 module applies,
+      # which measurably is not enough on a loaded machine right after two
+      # documents are consumed.
+      #
+      # Two variables for one setting, because Paperless renamed it: 2.x reads
+      # PAPERLESS_DB_TIMEOUT and knows nothing of DB_OPTIONS, while 3.x removed
+      # it in favour of PAPERLESS_DB_OPTIONS and only logs a deprecation
+      # warning for the old name. Each version ignores the one that is not its
+      # own, so both are set.
+      #
+      # What each actually achieves, measured rather than assumed, by holding a
+      # write lock inside the container and timing a request against it:
+      #
+      #   2.16.0 resolves OPTIONS to {'timeout': 30} and the blocked request
+      #     now waits the lock out and succeeds. This is the leg that was
+      #     flaky, and this is the line that fixes it.
+      #   3.1.3 merges `timeout=30` into its own defaults, but those defaults
+      #     include `PRAGMA busy_timeout=5000`, and the pragma is what governs
+      #     at runtime — so the effective wait there is still 5s. It does not
+      #     need more: 3.x also sets `PRAGMA journal_mode=WAL`, which stops
+      #     readers and the writer from blocking each other in the first place.
+      #     DB_OPTIONS is set anyway because it is the name that survives —
+      #     DB_TIMEOUT is slated for removal in 3.2.
+      PAPERLESS_DB_TIMEOUT: "30"
+      PAPERLESS_DB_OPTIONS: "timeout=30"
+
       # Creates the superuser on first start, so no interactive
       # `createsuperuser` is needed. Documented under PAPERLESS_ADMIN_USER.
       PAPERLESS_ADMIN_USER: ${PAPERLESS_IT_ADMIN_USER:-mcp-it-admin}

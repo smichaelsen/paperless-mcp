@@ -746,23 +746,27 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
         let lastStatus = 0;
 
         // The delete is re-issued on every attempt rather than issued once and
-        // then waited on, and that is not belt-and-braces — it is the only
-        // thing that can work.
+        // then waited on.
         //
-        // `{"result":"OK"}` from this endpoint is not evidence that anything
-        // was deleted. Upstream's `bulk_edit.delete` wraps the database delete
-        // and the index update in a single try/except, logs
-        // "Error deleting documents: ..." and returns "OK" regardless. So a
-        // delete that loses a SQLite write lock to the consumer reports
-        // success and leaves the document exactly where it was — verified by
-        // holding a write lock inside the container during a delete: the log
-        // shows "database is locked", and the document is still retrievable
-        // long after the lock is gone.
+        // The usual reason it could fail is gone: the stack now gives SQLite a
+        // 30s busy timeout, so a request arriving mid-write waits instead of
+        // being refused. This retry is what remains after that, and it is kept
+        // deliberately, because the timeout fixes the *contention* and not the
+        // thing that makes contention dangerous here — `bulk_edit.delete`
+        // wraps the database delete and the index update in a single
+        // try/except, logs "Error deleting documents: ..." and returns
+        // `{"result":"OK"}` either way. A delete that fails for any reason at
+        // all is therefore reported as success and leaves the document exactly
+        // where it was, permanently: verified by holding a write lock during a
+        // delete, where the document is still retrievable long after the lock
+        // is gone.
         //
-        // That is why this is not a timeout that wants widening. A delete
-        // which did not happen never completes, so waiting is useless and
-        // asking again is the only remedy; 30s of retries says more than 300s
-        // of patience.
+        // So "OK" cannot be trusted as evidence, no setting makes it
+        // trustworthy, and re-asking is the only way to tell a slow delete
+        // from one that silently did not happen. It costs nothing when the
+        // first attempt works, and it cannot hide a real regression: a delete
+        // that is permanently broken never yields a 404 and this still expires
+        // red.
         await poll("the documents to be deleted", 30_000, async () => {
           // A repeat delete of already-deleted ids is rejected by validation,
           // which is fine — the GET below is what decides.
