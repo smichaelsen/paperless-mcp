@@ -3,28 +3,43 @@ name: Live Paperless integration
 # Runs tests/integration/ against a real, disposable Paperless-ngx.
 #
 # Why this is a separate workflow rather than a job in ci.yml: ci.yml is the
-# quality gate, it takes about two minutes, and nothing here may slow it down.
-# Keeping the live lane out of that file means the gate's jobs are byte for
-# byte the ones they were, and the live legs run beside them rather than after
-# them.
+# quality gate, it takes about twenty seconds a job, and nothing here may slow
+# it down. Keeping the live lane out of that file means the gate's jobs are
+# byte for byte the ones they were, and the live legs run beside them rather
+# than after them.
 #
 # Where it runs, and why:
 #
-#   * every pull request and every push to main. Booting Paperless costs a few
-#     minutes, which is a real tax, and it is worth paying: this is the only
-#     lane that can catch a wrong query parameter or a withdrawn endpoint, and
-#     that class of bug is *silent* — the client gets a 200 and a plausible
-#     page of the wrong documents, so no unit test, type check or review will
-#     find it. There is deliberately no paths filter: a required check that
-#     skips itself on some diffs is worse than one that always runs.
+#   * every pull request and every push to main. Booting Paperless costs a
+#     couple of minutes, which is a real tax, and it is worth paying: this is
+#     the only lane that can catch a wrong query parameter or a withdrawn
+#     endpoint, and that class of bug is *silent* — the client gets a 200 and
+#     a plausible page of the wrong documents, so no unit test, type check or
+#     review will find it. There is deliberately no paths filter: a required
+#     check that skips itself on some diffs is worse than one that always runs.
 #   * weekly, and on demand. The pinned matrix below only moves when someone
 #     edits this file, so on its own it can never notice that a *new*
 #     Paperless-ngx broke us. The scheduled `drift` job resolves the newest
 #     upstream release at run time and is the thing that does.
 #
-# The drift job is intentionally not a pull-request gate: an upstream release
-# that breaks this client is worth an alert, never a red tick on somebody
-# else's unrelated PR.
+# Two operational facts about this file that are easy to rediscover the hard
+# way:
+#
+#   * `live` is only a *gate* if branch protection lists it as a required
+#     check. Nothing in this file can make it required. If it is not in the
+#     repository's protection rules, it is advisory and a red run can be merged
+#     straight past.
+#   * GitHub disables `schedule` triggers after 60 days with no repository
+#     activity, and says so only by email to the repository admin. A drift
+#     alarm that switches itself off during a quiet quarter is worth checking
+#     for whenever this repository has been idle for a while — the Actions tab
+#     shows the workflow as disabled.
+#
+# A red `drift` run currently signals through the workflow's own failure (and
+# GitHub's scheduled-failure email) rather than opening an issue. Filing one
+# automatically would need `issues: write` and de-duplication so a broken
+# upstream does not open a fresh issue every Monday; that is a policy call for
+# the repository owner rather than something to switch on here.
 
 on:
   pull_request:
@@ -39,7 +54,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: integration-${{ github.workflow }}-${{ github.ref }}
+  # `github.event_name` is part of the key on purpose. Without it a schedule
+  # run and a push to main both resolve github.ref to refs/heads/main, so a
+  # Monday-morning push silently cancels the weekly drift run — and a drift
+  # alarm that cancels itself and says nothing is worse than no alarm.
+  group: integration-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -74,7 +93,12 @@ jobs:
         run: ./scripts/integration-stack.sh up
 
       - name: Integration tests
-        run: npm run test:integration
+        # Not `npm run test:integration` directly: the suite skips itself when
+        # PAPERLESS_TEST_URL is unset and vitest then exits 0, so running it
+        # bare would let this job report success without touching Paperless.
+        # The `test` subcommand asserts both that the URL is set and that tests
+        # actually ran.
+        run: ./scripts/integration-stack.sh test
 
       - name: Paperless logs
         if: failure()
@@ -92,6 +116,11 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    concurrency:
+      # Its own group, and no cancel-in-progress. This job must not be
+      # cancellable by anything else that happens to run on the same ref.
+      group: integration-drift
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -126,14 +155,16 @@ jobs:
         run: ./scripts/integration-stack.sh up
 
       - name: Integration tests
-        run: npm run test:integration
+        run: ./scripts/integration-stack.sh test
 
       - name: Report what to do about a failure
-        if: failure()
+        # Gated on `resolve` having succeeded: without that, a failure to parse
+        # the upstream tag would print "the suite failed against Paperless-ngx"
+        # for a run in which no suite ever started, and send the next person
+        # looking in the wrong place.
+        if: failure() && steps.resolve.outcome == 'success'
         env:
           VERSION: ${{ steps.resolve.outputs.version }}
-        # A red drift run means one of two things, and saying which saves the
-        # next person the investigation.
         run: |
           echo "::warning::The integration suite failed against Paperless-ngx ${VERSION}, which is newer than anything in the pinned matrix."
           echo "Either this client needs to change, or README.md's supported range needs its upper bound corrected. Do not widen the range without a passing run."
