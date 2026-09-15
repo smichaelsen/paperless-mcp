@@ -314,6 +314,10 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
 
   // --- write --------------------------------------------------------------
   post_document: { access: "write", annotations: CREATES },
+  create_public_document_share_link: {
+    access: "write",
+    annotations: CREATES,
+  },
   create_tag: { access: "write", annotations: CREATES },
   create_correspondent: { access: "write", annotations: CREATES },
   create_document_type: { access: "write", annotations: CREATES },

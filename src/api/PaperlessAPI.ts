@@ -205,6 +205,21 @@ export class PaperlessAPI {
     return this.request(`/documents/${id}/`);
   }
 
+  async createDocumentShareLink(
+    document: number,
+    fileVersion: "archive" | "original",
+    expiration: string
+  ) {
+    return this.request("/share_links/", {
+      method: "POST",
+      body: JSON.stringify({
+        document,
+        file_version: fileVersion,
+        expiration,
+      }),
+    });
+  }
+
   async updateDocument(id: number, data: Record<string, any>) {
     return this.request(`/documents/${id}/`, {
       method: "PATCH",

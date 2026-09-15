@@ -3,6 +3,7 @@ import {
   BROWSER_URL_ENV,
   BrowserUrlError,
   documentDownloadUrl,
+  publicDocumentShareUrl,
   resolvePaperlessBrowserUrl,
 } from "../src/config/browserUrl";
 import { clearRegisteredSecrets, log } from "../src/logging";
@@ -95,5 +96,25 @@ describe("documentDownloadUrl", () => {
     ).toBe(
       "https://paperless.example/api/documents/42/download/?original=true"
     );
+  });
+});
+
+describe("publicDocumentShareUrl", () => {
+  it("builds Paperless's public share path", () => {
+    expect(
+      publicDocumentShareUrl(
+        new URL("https://paperless.example"),
+        "opaque-share-slug"
+      )
+    ).toBe("https://paperless.example/share/opaque-share-slug");
+  });
+
+  it("preserves a deployment sub-path and encodes the slug as one segment", () => {
+    expect(
+      publicDocumentShareUrl(
+        new URL("https://paperless.example/paperless/"),
+        "opaque/slug"
+      )
+    ).toBe("https://paperless.example/paperless/share/opaque%2Fslug");
   });
 });

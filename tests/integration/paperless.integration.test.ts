@@ -39,7 +39,11 @@ import {
   readServerApiVersion,
   readServerVersion,
 } from "../../src/api/apiVersion";
-import { buildBulkEditParameters } from "../../src/tools/documents";
+import {
+  buildBulkEditParameters,
+  registerDocumentTools,
+} from "../../src/tools/documents";
+import { createFakeServer } from "../helpers/fakeServer";
 
 const baseUrl = process.env.PAPERLESS_TEST_URL?.replace(/\/+$/, "");
 const token = process.env.PAPERLESS_TEST_TOKEN;
@@ -92,6 +96,8 @@ const createdTags: number[] = [];
 const createdCorrespondents: number[] = [];
 const createdDocumentTypes: number[] = [];
 const createdDocuments: number[] = [];
+const createdShareLinks: number[] = [];
+const createdUsers: number[] = [];
 
 let api: PaperlessAPI;
 
@@ -116,6 +122,57 @@ async function rawRequest(
       ...init.headers,
     },
   });
+}
+
+async function tokenFor(username: string, password: string): Promise<string> {
+  const response = await fetch(`${baseUrl}/api/token/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  expect(response.status).toBe(200);
+  const payload: any = await response.json();
+  expect(payload.token).toEqual(expect.any(String));
+  return payload.token;
+}
+
+async function createPrincipal(
+  label: string,
+  permissions: string[]
+): Promise<{ api: PaperlessAPI; id: number }> {
+  const username = fixtureName(label);
+  const password = `Mcp-It-${randomUUID()}!`;
+  const response = await rawRequest("/users/", {
+    method: "POST",
+    body: JSON.stringify({
+      username,
+      password,
+      email: `${username}@example.invalid`,
+      is_active: true,
+      user_permissions: permissions,
+    }),
+  });
+  expect(response.status).toBe(201);
+  const user: any = await response.json();
+  createdUsers.push(user.id);
+  expect(user.user_permissions).toEqual(expect.arrayContaining(permissions));
+  return {
+    api: new PaperlessAPI(baseUrl!, await tokenFor(username, password)),
+    id: user.id,
+  };
+}
+
+function publicShareTool(principal: PaperlessAPI) {
+  const fake = createFakeServer();
+  registerDocumentTools(fake.server, principal, new URL(baseUrl!));
+  return fake.get("create_public_document_share_link");
+}
+
+async function activeShareLinkIds(documentId: number): Promise<number[]> {
+  const response = await rawRequest(`/documents/${documentId}/share_links/`);
+  expect(response.status).toBe(200);
+  const links: any[] = await response.json();
+  return links.map((link) => link.id).sort((a, b) => a - b);
 }
 
 /**
@@ -169,6 +226,16 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
       }
     };
 
+    for (const shareLinkId of createdShareLinks) {
+      await attempt(`share link ${shareLinkId}`, async () => {
+        const response = await rawRequest(`/share_links/${shareLinkId}/`, {
+          method: "DELETE",
+        });
+        if (response.status !== 204 && response.status !== 404) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+      });
+    }
     if (createdDocuments.length) {
       await attempt("documents", () =>
         api.bulkEditDocuments(createdDocuments, "delete")
@@ -188,6 +255,16 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
       await attempt("document types", () =>
         api.bulkEditObjects(createdDocumentTypes, "document_types", "delete")
       );
+    }
+    for (const userId of createdUsers) {
+      await attempt(`user ${userId}`, async () => {
+        const response = await rawRequest(`/users/${userId}/`, {
+          method: "DELETE",
+        });
+        if (response.status !== 204 && response.status !== 404) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+      });
     }
   });
 
@@ -641,6 +718,94 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
       const download = await api.downloadDocument(searchableId, true);
       expect(download.ok).toBe(true);
       expect(await download.text()).toContain(searchNonce);
+    });
+
+    it("creates expiring archive and original public share links", async () => {
+      const tool = publicShareTool(api);
+      const cases = [
+        { fileVersion: "archive", expirationDays: 1 },
+        { fileVersion: "original", expirationDays: 7 },
+      ] as const;
+
+      for (const { fileVersion, expirationDays } of cases) {
+        const before = Date.now();
+        const result = await tool.handler(
+          {
+            id: searchableId,
+            file_version: fileVersion,
+            expiration_days: expirationDays,
+          },
+          {}
+        );
+        const payload = JSON.parse(result.content[0].text);
+        createdShareLinks.push(payload.share_link_id);
+
+        expect(payload.file_version).toBe(fileVersion);
+        expect(payload.url).toMatch(
+          new RegExp(`^${baseUrl}/share/[A-Za-z0-9]+$`)
+        );
+        const expiresAt = Date.parse(payload.expires_at);
+        const duration = expirationDays * 24 * 60 * 60 * 1000;
+        expect(expiresAt).toBeGreaterThanOrEqual(before + duration - 5_000);
+        expect(expiresAt).toBeLessThanOrEqual(Date.now() + duration + 5_000);
+
+        const persistedResponse = await rawRequest(
+          `/share_links/${payload.share_link_id}/`
+        );
+        expect(persistedResponse.status).toBe(200);
+        const persisted: any = await persistedResponse.json();
+        expect(persisted.file_version).toBe(fileVersion);
+        expect(persisted.expiration).toBe(payload.expires_at);
+
+        // The original-file case proves the returned bearer URL is usable
+        // without an authenticated Paperless session. The synthetic text
+        // fixture has no archive file on Paperless 2.16, so archive selection
+        // is asserted against the persisted share-link record above.
+        if (fileVersion === "original") {
+          const publicResponse = await fetch(payload.url);
+          expect(publicResponse.status).toBe(200);
+          expect(await publicResponse.text()).toContain(searchNonce);
+        }
+      }
+    });
+
+    it("requires both add_sharelink and document visibility", async () => {
+      const before = await activeShareLinkIds(searchableId);
+
+      const viewerWithoutAdd = await createPrincipal("viewer-no-share", [
+        "view_document",
+      ]);
+      await api.bulkEditDocuments(
+        [searchableId],
+        "set_permissions",
+        buildBulkEditParameters("set_permissions", {
+          permissions: {
+            set_permissions: {
+              view: { users: [viewerWithoutAdd.id], groups: [] },
+              change: { users: [], groups: [] },
+            },
+            merge: true,
+          },
+        })
+      );
+      await expect(
+        publicShareTool(viewerWithoutAdd.api).handler(
+          { id: searchableId, expiration_days: 1 },
+          {}
+        )
+      ).rejects.toThrow(/status: 403/);
+      expect(await activeShareLinkIds(searchableId)).toEqual(before);
+
+      const adderWithoutView = await createPrincipal("share-no-view", [
+        "add_sharelink",
+      ]);
+      await expect(
+        publicShareTool(adderWithoutView.api).handler(
+          { id: searchableId, expiration_days: 1 },
+          {}
+        )
+      ).rejects.toThrow(/status: (403|404)/);
+      expect(await activeShareLinkIds(searchableId)).toEqual(before);
     });
 
     it("applies a bulk tag edit to a real document", async () => {

@@ -20,8 +20,8 @@ import { fullPolicyInMode } from "./modeHarness";
 
 const MODES = [
   ["read-only", toolAccessMode(false, false), 10],
-  ["write", toolAccessMode(true, false), 17],
-  ["destructive", toolAccessMode(true, true), 21],
+  ["write", toolAccessMode(true, false), 18],
+  ["destructive", toolAccessMode(true, true), 22],
 ] as const;
 
 function build(mode: ReturnType<typeof toolAccessMode>): string[] {

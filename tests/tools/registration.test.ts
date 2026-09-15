@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { clearRegisteredSecrets, redact } from "../../src/logging";
 import { registerCorrespondentTools } from "../../src/tools/correspondents";
 import { registerDocumentTools } from "../../src/tools/documents";
 import { registerDocumentTypeTools } from "../../src/tools/documentTypes";
@@ -13,6 +14,7 @@ const EXPECTED_TOOLS = [
   "search_documents",
   "download_document",
   "get_document_download_link",
+  "create_public_document_share_link",
   "list_tags",
   "get_tag",
   "create_tag",
@@ -53,6 +55,7 @@ const SMOKE_ARGS: Record<string, Record<string, unknown>> = {
   search_documents: { query: "synthetic" },
   download_document: { id: 1 },
   get_document_download_link: { id: 1 },
+  create_public_document_share_link: { id: 1, expiration_days: 1 },
   list_tags: {},
   get_tag: { id: 1 },
   create_tag: { name: "synthetic" },
@@ -75,7 +78,17 @@ const downloadStub = () =>
       new Response("pdf-bytes", {
         headers: { "content-disposition": 'attachment; filename="a.pdf"' },
       }),
+    createDocumentShareLink: async () => ({
+      id: 99,
+      expiration: "2026-09-16T12:00:00.000Z",
+      slug: "opaque-share-slug",
+      file_version: "archive",
+    }),
   });
+
+afterEach(() => {
+  clearRegisteredSecrets();
+});
 
 describe("tool registration", () => {
   it("registers the documented tool surface, and nothing else", () => {
@@ -141,6 +154,23 @@ describe("argument validation", () => {
     expect(fake.get("get_document").parse({ id: 1 }).success).toBe(true);
     expect(fake.get("get_document").parse({ id: "1" }).success).toBe(false);
     expect(fake.get("get_document").parse({}).success).toBe(false);
+  });
+
+  it("requires a bounded expiration and restricts public shares to archive or original", () => {
+    const tool = fake.get("create_public_document_share_link");
+
+    expect(tool.parse({ id: 1, expiration_days: 1 }).success).toBe(true);
+    expect(
+      tool.parse({ id: 1, expiration_days: 7, file_version: "original" })
+        .success
+    ).toBe(true);
+    for (const expiration_days of [undefined, 0, 8, 1.5]) {
+      expect(tool.parse({ id: 1, expiration_days }).success).toBe(false);
+    }
+    expect(
+      tool.parse({ id: 1, expiration_days: 1, file_version: "thumbnail" })
+        .success
+    ).toBe(false);
   });
 
   it("allows update_document to clear nullable relations but not to invent fields", () => {
@@ -463,5 +493,143 @@ describe("handler behaviour", () => {
     expect(String(error)).toContain("PAPERLESS_BROWSER_URL");
     expect(String(error)).not.toContain(internalUrl);
     expect(stub.calls).toEqual([]);
+  });
+
+  it("also refuses a public share when the browser URL is absent", async () => {
+    const stub = createApiStub();
+    const fake = createFakeServer();
+    registerDocumentTools(fake.server, stub.api);
+
+    await expect(
+      fake
+        .get("create_public_document_share_link")
+        .handler({ id: 7, expiration_days: 1 }, {})
+    ).rejects.toThrow("PAPERLESS_BROWSER_URL");
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("creates a bounded archive share only after checking document access", async () => {
+    const slug = "archive-share-bearer-slug";
+    const expiresAt = "2026-09-22T12:00:00.000Z";
+    const stub = createApiStub({
+      getDocument: async () => ({ id: 7 }),
+      createDocumentShareLink: async () => ({
+        id: 123,
+        expiration: expiresAt,
+        slug,
+        file_version: "archive",
+      }),
+    });
+    const fake = registerAll(
+      stub.api,
+      new URL("https://paperless.example/sub-path/")
+    );
+    const before = Date.now();
+
+    const result = await fake
+      .get("create_public_document_share_link")
+      .handler({ id: 7, expiration_days: 7 }, {});
+
+    expect(stub.calls[0]).toEqual({ method: "getDocument", args: [7] });
+    expect(stub.calls[1].method).toBe("createDocumentShareLink");
+    expect(stub.calls[1].args.slice(0, 2)).toEqual([7, "archive"]);
+    const requestedExpiration = Date.parse(stub.calls[1].args[2]);
+    expect(requestedExpiration).toBeGreaterThanOrEqual(
+      before + 7 * 24 * 60 * 60 * 1000
+    );
+    expect(requestedExpiration).toBeLessThanOrEqual(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    );
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload).toEqual({
+      url: `https://paperless.example/sub-path/share/${slug}`,
+      share_link_id: 123,
+      file_version: "archive",
+      expires_at: expiresAt,
+    });
+
+    // Slugs and full URLs are bearer credentials and must be scrubbed even if
+    // a future caller mistakenly tries to log the returned payload.
+    const scrubbed = redact(`${slug} ${payload.url}`);
+    expect(scrubbed).not.toContain(slug);
+    expect(scrubbed).not.toContain(payload.url);
+  });
+
+  it("creates an original-file share when explicitly requested", async () => {
+    const stub = createApiStub({
+      createDocumentShareLink: async () => ({
+        id: 124,
+        expiration: "2026-09-16T12:00:00.000Z",
+        slug: "original-share-bearer-slug",
+        file_version: "original",
+      }),
+    });
+    const fake = registerAll(stub.api);
+
+    const result = await fake
+      .get("create_public_document_share_link")
+      .handler(
+        { id: 8, expiration_days: 1, file_version: "original" },
+        {}
+      );
+
+    expect(stub.calls[1].args[1]).toBe("original");
+    expect(JSON.parse(result.content[0].text).file_version).toBe("original");
+  });
+
+  it("returns no partial public URL when access or creation fails", async () => {
+    const accessDenied = new Error("HTTP error! status: 404");
+    const denied = createApiStub({
+      getDocument: async () => {
+        throw accessDenied;
+      },
+    });
+    const deniedTool = registerAll(denied.api).get(
+      "create_public_document_share_link"
+    );
+    await expect(
+      deniedTool.handler({ id: 7, expiration_days: 1 }, {})
+    ).rejects.toBe(accessDenied);
+    expect(denied.calls).toEqual([{ method: "getDocument", args: [7] }]);
+
+    const createFailed = new Error("HTTP error! status: 403");
+    const failed = createApiStub({
+      createDocumentShareLink: async () => {
+        throw createFailed;
+      },
+    });
+    const failedTool = registerAll(failed.api).get(
+      "create_public_document_share_link"
+    );
+    await expect(
+      failedTool.handler({ id: 7, expiration_days: 1 }, {})
+    ).rejects.toBe(createFailed);
+    expect(failed.calls.map((call) => call.method)).toEqual([
+      "getDocument",
+      "createDocumentShareLink",
+    ]);
+  });
+
+  it("rejects an invalid Paperless response without reflecting its slug", async () => {
+    const secretSlug = "malformed-secret-share-slug";
+    const fake = registerAll(
+      createApiStub({
+        createDocumentShareLink: async () => ({ slug: secretSlug }),
+      }).api
+    );
+
+    let error: unknown;
+    try {
+      await fake
+        .get("create_public_document_share_link")
+        .handler({ id: 7, expiration_days: 1 }, {});
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(String(error)).toBe(
+      "Error: Paperless returned an invalid share-link response."
+    );
+    expect(String(error)).not.toContain(secretSlug);
   });
 });

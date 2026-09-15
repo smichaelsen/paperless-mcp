@@ -49,6 +49,7 @@ const WRITE_TOOLS = [
   "bulk_edit_documents",
   "create_correspondent",
   "create_document_type",
+  "create_public_document_share_link",
   "create_tag",
   "post_document",
   "update_document",
@@ -112,6 +113,7 @@ const EXPECTED_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_document_type: reads,
 
   post_document: creates,
+  create_public_document_share_link: creates,
   create_tag: creates,
   create_correspondent: creates,
   create_document_type: creates,
@@ -212,6 +214,22 @@ describe("exact tool allowlist", () => {
     expect(await toolNamesWithPolicy(policy)).toEqual([
       "get_document",
       "update_document",
+    ]);
+  });
+
+  it("requires write mode and an exact allowlist entry for public shares", async () => {
+    const disabled = resolveEffectiveToolPolicy(MODES["read-only"], {
+      enabledTools: ["create_public_document_share_link"],
+      bulkEditMethods: undefined,
+    });
+    expect(await toolNamesWithPolicy(disabled)).toEqual([]);
+
+    const enabled = resolveEffectiveToolPolicy(MODES.write, {
+      enabledTools: ["create_public_document_share_link"],
+      bulkEditMethods: undefined,
+    });
+    expect(await toolNamesWithPolicy(enabled)).toEqual([
+      "create_public_document_share_link",
     ]);
   });
 

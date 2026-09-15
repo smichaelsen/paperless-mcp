@@ -164,6 +164,28 @@ describe("PaperlessAPI failure logging", () => {
       expect(Object.keys(record).sort()).toEqual(SAFE_FAILURE_FIELDS);
     });
 
+    it("does not leak a failed share-link request or response", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(upstreamErrorBody(), { status: 403 }))
+      );
+
+      const api = new PaperlessAPI(BASE_URL, SENTINEL_TOKEN);
+      await expect(
+        api.createDocumentShareLink(4711, "original", SENTINEL_CONTENT)
+      ).rejects.toThrow("HTTP error! status: 403");
+
+      expectNoSentinels();
+      expect(output()).not.toContain("4711");
+      const record = JSON.parse(captured[0]);
+      expect(record).toMatchObject({
+        method: "POST",
+        endpoint: "/share_links/",
+        status: 403,
+      });
+      expect(Object.keys(record).sort()).toEqual(SAFE_FAILURE_FIELDS);
+    });
+
     it("logs and raises a failed download instead of returning the error body", async () => {
       vi.stubGlobal(
         "fetch",

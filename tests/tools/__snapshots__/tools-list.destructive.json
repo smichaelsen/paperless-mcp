@@ -565,6 +565,50 @@
       "openWorldHint": false,
       "readOnlyHint": false
     },
+    "description": "Create an anonymous, expiring bearer link that grants access to one Paperless document outside the authenticated user boundary. The link remains usable until it expires or is revoked, independently of this MCP or chat session. This is a security-sensitive write operation; clients should request user confirmation before every invocation.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "expiration_days": {
+          "description": "Required lifetime of the public link in whole days, from 1 through the conservative maximum of 7.",
+          "maximum": 7,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "file_version": {
+          "description": "Document file version exposed by the public link: the processed archive (default) or the original upload.",
+          "enum": [
+            "archive",
+            "original"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "description": "Document ID to share. Get this from search_documents or get_document results.",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "expiration_days"
+      ],
+      "type": "object"
+    },
+    "name": "create_public_document_share_link"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
     "description": "Create a new tag for labeling and organizing documents. Tags can have colors for visual identification and automatic matching rules for smart assignment.",
     "execution": {
       "taskSupport": "forbidden"

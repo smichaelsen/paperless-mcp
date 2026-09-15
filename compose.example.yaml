@@ -95,8 +95,9 @@ services:
 
       # Optional: the URL a user's browser can reach. This is never inferred
       # from PAPERLESS_URL, which may be an internal container address. It
-      # enables get_document_download_link; opening a returned link uses the
-      # user's normal Paperless browser session.
+      # enables get_document_download_link and, when separately allowed below,
+      # create_public_document_share_link. It is never a credential and must
+      # already be reachable by the person opening a returned link.
       PAPERLESS_BROWSER_URL: https://paperless.example
 
       PAPERLESS_API_TOKEN_FILE: /run/secrets/paperless_token
@@ -122,7 +123,7 @@ services:
       # its own method allowlist. The access mode remains the outer boundary.
       # PAPERLESS_ALLOW_WRITES: "true"
       # PAPERLESS_ALLOW_DESTRUCTIVE: "true"
-      # PAPERLESS_MCP_ENABLED_TOOLS: "get_document,search_documents,update_document,bulk_edit_documents"
+      # PAPERLESS_MCP_ENABLED_TOOLS: "get_document,search_documents,update_document,create_public_document_share_link,bulk_edit_documents"
       # PAPERLESS_MCP_BULK_EDIT_METHODS: "add_tag,remove_tag,set_correspondent"
 
     secrets:
