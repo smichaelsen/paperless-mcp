@@ -52,10 +52,10 @@ afterEach(async () => {
 });
 
 describe("MCP surface", () => {
-  it("advertises all 21 tools with usable JSON Schemas", async () => {
+  it("advertises all 22 tools with usable JSON Schemas", async () => {
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(22);
     for (const tool of tools) {
       expect(tool.description, tool.name).toBeTruthy();
       expect(tool.inputSchema.type, tool.name).toBe("object");
@@ -106,6 +106,44 @@ describe("MCP surface", () => {
       url: `${BROWSER_URL}/api/documents/42/download/?original=true`,
       original: true,
       requires_browser_session: true,
+    });
+  });
+
+  it("creates a public share with the exact Paperless payload", async () => {
+    const slug = "public-share-bearer-slug";
+    const fetchMock = mockFetch((url) =>
+      url.endsWith("/api/share_links/")
+        ? jsonResponse({
+            id: 123,
+            expiration: "2026-09-22T12:00:00.000Z",
+            slug,
+            file_version: "original",
+          })
+        : jsonResponse({ id: 42 })
+    );
+
+    const result: any = await client.callTool({
+      name: "create_public_document_share_link",
+      arguments: {
+        id: 42,
+        file_version: "original",
+        expiration_days: 7,
+      },
+    });
+
+    expect(fetchMock.calls.map((call) => call.url)).toEqual([
+      `${BASE_URL}/api/documents/42/`,
+      `${BASE_URL}/api/share_links/`,
+    ]);
+    const request = JSON.parse(String(fetchMock.calls[1].init.body));
+    expect(request.document).toBe(42);
+    expect(request.file_version).toBe("original");
+    expect(Date.parse(request.expiration)).not.toBeNaN();
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      url: `${BROWSER_URL}/share/${slug}`,
+      share_link_id: 123,
+      file_version: "original",
+      expires_at: "2026-09-22T12:00:00.000Z",
     });
   });
 

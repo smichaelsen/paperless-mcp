@@ -1,6 +1,36 @@
 import { z } from "zod";
-import { BROWSER_URL_ENV, documentDownloadUrl } from "../config/browserUrl";
+import {
+  BROWSER_URL_ENV,
+  documentDownloadUrl,
+  publicDocumentShareUrl,
+} from "../config/browserUrl";
+import { registerSecret } from "../logging";
 import { toTextResult } from "./result";
+
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+interface ShareLinkResponse {
+  id: number;
+  expiration: string;
+  slug: string;
+  file_version: "archive" | "original";
+}
+
+function isShareLinkResponse(
+  value: unknown,
+  requestedVersion: "archive" | "original"
+): value is ShareLinkResponse {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ShareLinkResponse>;
+  return (
+    Number.isInteger(candidate.id) &&
+    typeof candidate.slug === "string" &&
+    candidate.slug.trim().length >= 6 &&
+    typeof candidate.expiration === "string" &&
+    Number.isFinite(Date.parse(candidate.expiration)) &&
+    candidate.file_version === requestedVersion
+  );
+}
 
 /**
  * Expand a page specification like `1,3,5-7` into `[1, 3, 5, 6, 7]`.
@@ -287,6 +317,62 @@ export function registerDocumentTools(server, api, browserUrl?: URL) {
         url: documentDownloadUrl(browserUrl, args.id, original),
         original,
         requires_browser_session: true,
+      });
+    }
+  );
+
+  server.tool(
+    "create_public_document_share_link",
+    "Create an anonymous, expiring bearer link that grants access to one Paperless document outside the authenticated user boundary. The link remains usable until it expires or is revoked, independently of this MCP or chat session. This is a security-sensitive write operation; clients should request user confirmation before every invocation.",
+    {
+      id: z.number().int().positive().describe("Document ID to share. Get this from search_documents or get_document results."),
+      file_version: z.enum(["archive", "original"]).optional().describe("Document file version exposed by the public link: the processed archive (default) or the original upload."),
+      expiration_days: z.number().int().min(1).max(7).describe("Required lifetime of the public link in whole days, from 1 through the conservative maximum of 7."),
+    },
+    async (args, extra) => {
+      if (!api) throw new Error("Please configure API connection first");
+      if (!browserUrl) {
+        throw new Error(
+          `${BROWSER_URL_ENV} must be configured to create public document share links.`
+        );
+      }
+
+      // This preflight is deliberate even though current Paperless versions
+      // also validate the document in the share-link serializer. Older
+      // supported versions did not, and the MCP principal must never create a
+      // capability for a document it cannot itself view.
+      await api.getDocument(args.id);
+
+      const fileVersion = args.file_version ?? "archive";
+      const expiration = new Date(
+        Date.now() + args.expiration_days * MILLISECONDS_PER_DAY
+      ).toISOString();
+      const created: unknown = await api.createDocumentShareLink(
+        args.id,
+        fileVersion,
+        expiration
+      );
+
+      // Construct nothing from a partial or surprising response. Error text
+      // stays generic so an upstream slug can never be reflected to the MCP
+      // caller or application log through an exception.
+      if (!isShareLinkResponse(created, fileVersion)) {
+        throw new Error("Paperless returned an invalid share-link response.");
+      }
+
+      const url = publicDocumentShareUrl(browserUrl, created.slug);
+      // A share slug and its complete URL are bearer credentials. Register
+      // both before returning them so any future attempt to log a tool result
+      // is scrubbed as defence in depth.
+      registerSecret(created.slug);
+      registerSecret(encodeURIComponent(created.slug));
+      registerSecret(url);
+
+      return toTextResult({
+        url,
+        share_link_id: created.id,
+        file_version: created.file_version,
+        expires_at: created.expiration,
       });
     }
   );

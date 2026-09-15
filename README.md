@@ -102,7 +102,7 @@ positional arguments are ignored.
 | Variable | Purpose |
 | --- | --- |
 | `PAPERLESS_URL` | Base URL of your Paperless-NGX instance, e.g. `https://paperless.example`. |
-| `PAPERLESS_BROWSER_URL` | Optional browser-reachable Paperless base URL used by `get_document_download_link`, e.g. `https://paperless.example` or `https://example.net/paperless`. Kept separate from `PAPERLESS_URL`; see [Browser-session download links](#browser-session-download-links). |
+| `PAPERLESS_BROWSER_URL` | Optional browser-reachable Paperless base URL used by `get_document_download_link` and `create_public_document_share_link`, e.g. `https://paperless.example` or `https://example.net/paperless`. Kept separate from `PAPERLESS_URL`; see [Browser-facing links](#browser-facing-links). |
 | `PAPERLESS_API_TOKEN` | Paperless API token. |
 | `PAPERLESS_API_TOKEN_FILE` | Path to a file containing the API token. Takes precedence over `PAPERLESS_API_TOKEN`. |
 | `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
@@ -135,9 +135,9 @@ the `--http` bearer secret has no command-line form at all. Generate one with
 [`compose.example.yaml`](compose.example.yaml) wires both files up as Docker
 secrets — see [Container deployment](#container-deployment).
 
-### Browser-session download links
+### Browser-facing links
 
-Set `PAPERLESS_BROWSER_URL` to use `get_document_download_link`. This is the URL
+Set `PAPERLESS_BROWSER_URL` to use either link tool. This is the URL
 the **user's browser** can reach; it may therefore differ from `PAPERLESS_URL`,
 which is the API address the MCP process can reach inside a container or private
 network. The server never derives one from the other and never falls back to
@@ -145,19 +145,34 @@ network. The server never derives one from the other and never falls back to
 
 The value must be an absolute `http://` or `https://` URL without embedded
 credentials, a query string or a fragment. Deployment sub-paths are supported:
-`https://example.net/paperless` produces links below
-`https://example.net/paperless/api/documents/...`. Invalid values abort startup;
-when the setting is absent, calling the tool returns a configuration error without
-disclosing the API URL.
+`https://example.net/paperless` produces links below that path. Invalid values
+abort startup; when the setting is absent, calling either tool returns a
+configuration error without disclosing the API URL.
 
-Before returning a link, the tool asks Paperless for that document using the MCP
+`get_document_download_link` returns a normal authenticated Paperless download
+URL. Before returning it, the tool asks Paperless for that document using the MCP
 server's API token. Paperless's normal not-found and permission failures are
 preserved, so no link is returned for a document that account cannot read. The
 returned link contains no API token, MCP bearer token, cookie or document bytes.
 Opening it relies entirely on the user's existing Paperless browser session; a user
-who is not signed in may be redirected to login or denied. The browser must be able
-to reach `PAPERLESS_BROWSER_URL`. Agents are instructed to show the URL as a
-clickable link rather than fetch it themselves.
+who is not signed in may be redirected to login or denied. Agents are instructed to
+show the URL as a clickable link rather than fetch it themselves.
+
+`create_public_document_share_link` is intentionally different: it asks Paperless
+to create a new anonymous bearer capability below `/share/<opaque-slug>`. It is a
+security-sensitive **write** tool, absent unless writes are enabled and its exact
+name appears in `PAPERLESS_MCP_ENABLED_TOOLS`. `expiration_days` is required and
+limited to 1–7 whole days; `file_version` is `archive` (the default) or `original`.
+The Paperless account needs `documents.add_sharelink` and must also be able to view
+the requested document. The server checks document access before creation and does
+not broaden permissions to make it succeed.
+
+Anyone who obtains a public share URL can use it without signing in. The link remains
+usable until it expires or is revoked in Paperless, independently of the MCP
+connection or chat session that created it. The MCP server does not make Paperless
+publicly reachable: the caller's browser must already be able to reach
+`PAPERLESS_BROWSER_URL`. Clients should request explicit user confirmation before
+every invocation.
 
 **Logging.** Operational events go to stderr as single-line JSON. A failed request
 logs the HTTP method, a normalized endpoint class (`/documents/:id/`), the status,
@@ -168,7 +183,8 @@ the duration and an error class — nothing else:
 ```
 
 Tokens, authorization headers, request bodies, uploaded files, generated browser
-download URLs, document titles/content and raw Paperless responses are never logged.
+download URLs, public share slugs and URLs, document titles/content and raw Paperless
+responses are never logged.
 
 ## Tool access modes
 
@@ -189,8 +205,8 @@ to cover.
 | Mode | Start it with | Maximum tools advertised |
 | --- | --- | --- |
 | **read-only** (default) | nothing to set | **10** |
-| **write** | `PAPERLESS_ALLOW_WRITES=true` or `--allow-writes`, plus a tool allowlist | **17** |
-| **destructive** | additionally `PAPERLESS_ALLOW_DESTRUCTIVE=true` or `--allow-destructive`, plus a tool allowlist | **21** |
+| **write** | `PAPERLESS_ALLOW_WRITES=true` or `--allow-writes`, plus a tool allowlist | **18** |
+| **destructive** | additionally `PAPERLESS_ALLOW_DESTRUCTIVE=true` or `--allow-destructive`, plus a tool allowlist | **22** |
 
 The flags may appear anywhere on the command line; they are not mistaken for the
 positional `<baseUrl> <token>`. Accepted true values are `1`, `true`, `yes`, `y`,
@@ -275,11 +291,12 @@ same as harmless: `search_documents` and `download_document` return the contents
 your documents, so a prompt injection hidden in a scanned document can use them to
 find sensitive material and hand it to whatever *other* tool the assistant has for
 sending data out (web requests, mail, shell). Ask every time for the write class —
-`update_document` and `bulk_edit_documents` act on many documents at once, so see the
-`documents` array first — and ask, and read the arguments, for the destructive class,
-where nothing can be undone from this server. Keep destructive operations out of
-unattended runs by starting those processes without `PAPERLESS_ALLOW_DESTRUCTIVE`, so
-the tools are not there to be called.
+especially `create_public_document_share_link`, which creates anonymous access that
+outlives the chat session. `update_document` and `bulk_edit_documents` act on many
+documents at once, so see the `documents` array first. Ask, and read the arguments,
+for the destructive class, where nothing can be undone from this server. Keep
+destructive operations out of unattended runs by starting those processes without
+`PAPERLESS_ALLOW_DESTRUCTIVE`, so the tools are not there to be called.
 
 ## Available Tools
 
@@ -292,6 +309,7 @@ client reads from `tools/list`. This is the map.
 | `search_documents` | read | Full-text search. Returns metadata **without** the OCR content field. There is no `list_documents`: this enumerates too, via `page`/`page_size`. |
 | `download_document` | read | The file as base64. `original: true` for the uploaded original instead of the archived version. |
 | `get_document_download_link` | read | Verifies access, then returns a browser-session URL for the archived file or, with `original: true`, the uploaded original. Requires `PAPERLESS_BROWSER_URL`; returns no document bytes or credentials. |
+| `create_public_document_share_link` | write | After verifying document access, creates an anonymous bearer link for the archive or original with a required 1–7 day expiration. Requires `PAPERLESS_BROWSER_URL`, `documents.add_sharelink`, write mode and an exact allowlist entry. |
 | `post_document` | write | Upload a new document (base64 `file` + `filename`), optionally with title, `created` date, correspondent, type, storage path, tags, ASN, custom fields. |
 | `update_document` | write | Correct title, `created` date, correspondent, type, storage path, tags or ASN on an existing document. **`tags` replaces the whole list** — use `bulk_edit_documents` with `add_tag`/`remove_tag` to change one. |
 | `bulk_edit_documents` | write (narrowed) / destructive | Act on many documents at once; see [above](#bulk_edit_documents) for what write mode leaves out. |

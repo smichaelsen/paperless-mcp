@@ -66,3 +66,13 @@ export function documentDownloadUrl(
   url.search = original ? "original=true" : "";
   return url.toString();
 }
+
+/** Build an anonymous share endpoint while preserving a deployment sub-path. */
+export function publicDocumentShareUrl(browserUrl: URL, slug: string): string {
+  const url = new URL(browserUrl.toString());
+  const deploymentPath = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${deploymentPath}/share/${encodeURIComponent(slug)}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
