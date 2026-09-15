@@ -304,6 +304,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
   get_document: { access: "read", annotations: READS },
   search_documents: { access: "read", annotations: READS },
   download_document: { access: "read", annotations: READS },
+  get_document_download_link: { access: "read", annotations: READS },
   list_tags: { access: "read", annotations: READS },
   get_tag: { access: "read", annotations: READS },
   list_correspondents: { access: "read", annotations: READS },

@@ -54,6 +54,7 @@ VSCode extension, `~/Library/Application Support/Code/User/globalStorage/saoudri
       "command": "paperless-mcp",
       "env": {
         "PAPERLESS_URL": "http://your-paperless-instance:8000",
+        "PAPERLESS_BROWSER_URL": "https://paperless.example",
         "PAPERLESS_API_TOKEN": "<API_TOKEN>"
       }
     }
@@ -101,6 +102,7 @@ positional arguments are ignored.
 | Variable | Purpose |
 | --- | --- |
 | `PAPERLESS_URL` | Base URL of your Paperless-NGX instance, e.g. `https://paperless.example`. |
+| `PAPERLESS_BROWSER_URL` | Optional browser-reachable Paperless base URL used by `get_document_download_link`, e.g. `https://paperless.example` or `https://example.net/paperless`. Kept separate from `PAPERLESS_URL`; see [Browser-session download links](#browser-session-download-links). |
 | `PAPERLESS_API_TOKEN` | Paperless API token. |
 | `PAPERLESS_API_TOKEN_FILE` | Path to a file containing the API token. Takes precedence over `PAPERLESS_API_TOKEN`. |
 | `API_KEY` | **Deprecated** alias for `PAPERLESS_API_TOKEN`. Still honoured; logs a deprecation notice. |
@@ -133,6 +135,30 @@ the `--http` bearer secret has no command-line form at all. Generate one with
 [`compose.example.yaml`](compose.example.yaml) wires both files up as Docker
 secrets — see [Container deployment](#container-deployment).
 
+### Browser-session download links
+
+Set `PAPERLESS_BROWSER_URL` to use `get_document_download_link`. This is the URL
+the **user's browser** can reach; it may therefore differ from `PAPERLESS_URL`,
+which is the API address the MCP process can reach inside a container or private
+network. The server never derives one from the other and never falls back to
+`PAPERLESS_URL` when the browser URL is absent.
+
+The value must be an absolute `http://` or `https://` URL without embedded
+credentials, a query string or a fragment. Deployment sub-paths are supported:
+`https://example.net/paperless` produces links below
+`https://example.net/paperless/api/documents/...`. Invalid values abort startup;
+when the setting is absent, calling the tool returns a configuration error without
+disclosing the API URL.
+
+Before returning a link, the tool asks Paperless for that document using the MCP
+server's API token. Paperless's normal not-found and permission failures are
+preserved, so no link is returned for a document that account cannot read. The
+returned link contains no API token, MCP bearer token, cookie or document bytes.
+Opening it relies entirely on the user's existing Paperless browser session; a user
+who is not signed in may be redirected to login or denied. The browser must be able
+to reach `PAPERLESS_BROWSER_URL`. Agents are instructed to show the URL as a
+clickable link rather than fetch it themselves.
+
 **Logging.** Operational events go to stderr as single-line JSON. A failed request
 logs the HTTP method, a normalized endpoint class (`/documents/:id/`), the status,
 the duration and an error class — nothing else:
@@ -141,8 +167,8 @@ the duration and an error class — nothing else:
 {"level":"error","event":"paperless_request_failed","method":"GET","endpoint":"/documents/:id/","status":500,"duration_ms":34,"error_class":"HttpStatusError"}
 ```
 
-Tokens, authorization headers, request bodies, uploaded files, document
-titles/content and raw Paperless responses are never logged.
+Tokens, authorization headers, request bodies, uploaded files, generated browser
+download URLs, document titles/content and raw Paperless responses are never logged.
 
 ## Tool access modes
 
@@ -162,9 +188,9 @@ to cover.
 
 | Mode | Start it with | Maximum tools advertised |
 | --- | --- | --- |
-| **read-only** (default) | nothing to set | **9** |
-| **write** | `PAPERLESS_ALLOW_WRITES=true` or `--allow-writes`, plus a tool allowlist | **16** |
-| **destructive** | additionally `PAPERLESS_ALLOW_DESTRUCTIVE=true` or `--allow-destructive`, plus a tool allowlist | **20** |
+| **read-only** (default) | nothing to set | **10** |
+| **write** | `PAPERLESS_ALLOW_WRITES=true` or `--allow-writes`, plus a tool allowlist | **17** |
+| **destructive** | additionally `PAPERLESS_ALLOW_DESTRUCTIVE=true` or `--allow-destructive`, plus a tool allowlist | **21** |
 
 The flags may appear anywhere on the command line; they are not mistaken for the
 positional `<baseUrl> <token>`. Accepted true values are `1`, `true`, `yes`, `y`,
@@ -188,7 +214,7 @@ method in write mode does not expose it.
 
 Write and destructive modes are deliberately fail-closed: setting either access
 switch without an explicit tool allowlist aborts startup. The read-only default
-keeps its existing nine tools when the variable is absent. In every mode, an
+keeps its ten tools when the variable is absent. In every mode, an
 explicitly empty tool allowlist exposes no tools. If `bulk_edit_documents`
 survives the mode and tool allowlist, its method allowlist is also required; an
 empty list, or one from which the mode removes every method, omits the tool.
@@ -265,6 +291,7 @@ client reads from `tools/list`. This is the map.
 | `get_document` | read | Full metadata, content preview, tags, correspondent and type for one document. |
 | `search_documents` | read | Full-text search. Returns metadata **without** the OCR content field. There is no `list_documents`: this enumerates too, via `page`/`page_size`. |
 | `download_document` | read | The file as base64. `original: true` for the uploaded original instead of the archived version. |
+| `get_document_download_link` | read | Verifies access, then returns a browser-session URL for the archived file or, with `original: true`, the uploaded original. Requires `PAPERLESS_BROWSER_URL`; returns no document bytes or credentials. |
 | `post_document` | write | Upload a new document (base64 `file` + `filename`), optionally with title, `created` date, correspondent, type, storage path, tags, ASN, custom fields. |
 | `update_document` | write | Correct title, `created` date, correspondent, type, storage path, tags or ASN on an existing document. **`tags` replaces the whole list** — use `bulk_edit_documents` with `add_tag`/`remove_tag` to change one. |
 | `bulk_edit_documents` | write (narrowed) / destructive | Act on many documents at once; see [above](#bulk_edit_documents) for what write mode leaves out. |
@@ -435,6 +462,7 @@ docker build -t paperless-mcp .
 
 docker run --rm --init \
   -e PAPERLESS_URL=https://paperless.example \
+  -e PAPERLESS_BROWSER_URL=https://paperless.example \
   -e PAPERLESS_API_TOKEN=your-api-token \
   -p 127.0.0.1:3000:3000 \
   paperless-mcp
@@ -471,7 +499,7 @@ execute in the container then has no package installer to hand.
 
 [`compose.example.yaml`](compose.example.yaml) is the recommended deployment. Copy it
 to `compose.yaml`, create the two secret files it documents, and adjust
-`PAPERLESS_URL`.
+`PAPERLESS_URL` plus the optional browser-facing `PAPERLESS_BROWSER_URL`.
 
 | Control | Setting |
 | --- | --- |

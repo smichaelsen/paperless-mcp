@@ -1,8 +1,9 @@
 # Hardened Compose example for paperless-mcp (issue #10).
 #
-# Copy to `compose.yaml`, create the two secret files, adjust `PAPERLESS_URL`,
-# and run `docker compose up -d`. The smoke test that proves this file is
-# actually hardened is in README.md → "Container deployment" → "Smoke test".
+# Copy to `compose.yaml`, create the two secret files, adjust `PAPERLESS_URL`
+# and the optional `PAPERLESS_BROWSER_URL`, then run `docker compose up -d`.
+# The smoke test that proves this file is actually hardened is in README.md →
+# "Container deployment" → "Smoke test".
 #
 # The shape of the deployment, and why:
 #
@@ -91,6 +92,13 @@ services:
 
     environment:
       PAPERLESS_URL: https://paperless.example
+
+      # Optional: the URL a user's browser can reach. This is never inferred
+      # from PAPERLESS_URL, which may be an internal container address. It
+      # enables get_document_download_link; opening a returned link uses the
+      # user's normal Paperless browser session.
+      PAPERLESS_BROWSER_URL: https://paperless.example
+
       PAPERLESS_API_TOKEN_FILE: /run/secrets/paperless_token
 
       # The bearer secret every MCP client must present. Without it the server

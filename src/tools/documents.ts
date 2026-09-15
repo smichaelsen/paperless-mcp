@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BROWSER_URL_ENV, documentDownloadUrl } from "../config/browserUrl";
 import { toTextResult } from "./result";
 
 /**
@@ -101,7 +102,7 @@ export function buildBulkEditParameters(
   return parameters;
 }
 
-export function registerDocumentTools(server, api) {
+export function registerDocumentTools(server, api, browserUrl?: URL) {
   server.tool(
     "bulk_edit_documents",
     "Perform bulk operations on multiple documents simultaneously: set correspondent/type/tags, delete, reprocess, merge, split, rotate, or manage permissions. Efficient for managing large document collections.",
@@ -256,6 +257,36 @@ export function registerDocumentTools(server, api) {
             .get("content-disposition")
             ?.split("filename=")[1]
             ?.replace(/"/g, "") || `document-${args.id}`,
+      });
+    }
+  );
+
+  server.tool(
+    "get_document_download_link",
+    "Create a browser-session download link for a document. Show the returned URL to the user as a clickable link; do not fetch it with the model. The browser must be able to reach the separately configured browser-facing Paperless URL and will use the user's existing Paperless session. No document bytes or credentials are included in the MCP response.",
+    {
+      id: z.number().describe("Document ID to link. Get this from search_documents or get_document results."),
+      original: z.boolean().optional().describe("Whether to link to the original uploaded file (true) or the processed/archived version (false, default)."),
+    },
+    async (args, extra) => {
+      if (!api) throw new Error("Please configure API connection first");
+      if (!browserUrl) {
+        throw new Error(
+          `${BROWSER_URL_ENV} must be configured to create browser download links.`
+        );
+      }
+
+      // Do not construct or return a link until Paperless confirms that the
+      // configured MCP account can read this exact document. getDocument uses
+      // the normal authenticated API path and preserves its 404/permission
+      // failure behaviour.
+      await api.getDocument(args.id);
+
+      const original = args.original ?? false;
+      return toTextResult({
+        url: documentDownloadUrl(browserUrl, args.id, original),
+        original,
+        requires_browser_session: true,
       });
     }
   );

@@ -16,18 +16,25 @@ import { fullPolicyInMode } from "./modeHarness";
 import { jsonResponse, mockFetch } from "../helpers/fetchMock";
 
 const BASE_URL = "https://paperless.example.invalid";
+const BROWSER_URL = "https://paperless.browser.example/sub-path";
+const API_TOKEN = "s3cr3t-token-value";
 
 let client: Client;
 
 beforeEach(async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 
-  const api = new PaperlessAPI(BASE_URL, "s3cr3t-token-value");
+  const api = new PaperlessAPI(BASE_URL, API_TOKEN);
   const server = new McpServer({ name: "paperless-ngx", version: "1.0.0" });
   // The same registration path src/index.ts uses. This suite is about the
   // transport and the schemas, so it asks for the widest mode; which tools each
   // mode exposes is tests/tools/toolModes.test.ts.
-  registerAllTools(server, api, fullPolicyInMode(toolAccessMode(true, true)));
+  registerAllTools(
+    server,
+    api,
+    fullPolicyInMode(toolAccessMode(true, true)),
+    new URL(BROWSER_URL)
+  );
 
   client = new Client({ name: "test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] =
@@ -45,10 +52,10 @@ afterEach(async () => {
 });
 
 describe("MCP surface", () => {
-  it("advertises all 20 tools with usable JSON Schemas", async () => {
+  it("advertises all 21 tools with usable JSON Schemas", async () => {
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(20);
+    expect(tools).toHaveLength(21);
     for (const tool of tools) {
       expect(tool.description, tool.name).toBeTruthy();
       expect(tool.inputSchema.type, tool.name).toBe("object");
@@ -77,6 +84,29 @@ describe("MCP surface", () => {
     expect(JSON.parse(result.content[0].text).results[0].name).toBe(
       "synthetic"
     );
+  });
+
+  it("keeps API credentials and the internal URL out of a browser link", async () => {
+    const upstreamSecret = "upstream-response-secret";
+    const fetchMock = mockFetch(() =>
+      jsonResponse({ id: 42, title: upstreamSecret })
+    );
+
+    const result: any = await client.callTool({
+      name: "get_document_download_link",
+      arguments: { id: 42, original: true },
+    });
+
+    expect(fetchMock.only().url).toBe(`${BASE_URL}/api/documents/42/`);
+    const wire = JSON.stringify(result);
+    expect(wire).not.toContain(API_TOKEN);
+    expect(wire).not.toContain(BASE_URL);
+    expect(wire).not.toContain(upstreamSecret);
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      url: `${BROWSER_URL}/api/documents/42/download/?original=true`,
+      original: true,
+      requires_browser_session: true,
+    });
   });
 
   it("rejects invalid arguments before any request is made", async () => {

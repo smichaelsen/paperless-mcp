@@ -19,9 +19,9 @@ import { registerAllTools } from "../../src/mcp/registerTools";
 import { fullPolicyInMode } from "./modeHarness";
 
 const MODES = [
-  ["read-only", toolAccessMode(false, false), 9],
-  ["write", toolAccessMode(true, false), 16],
-  ["destructive", toolAccessMode(true, true), 20],
+  ["read-only", toolAccessMode(false, false), 10],
+  ["write", toolAccessMode(true, false), 17],
+  ["destructive", toolAccessMode(true, true), 21],
 ] as const;
 
 function build(mode: ReturnType<typeof toolAccessMode>): string[] {

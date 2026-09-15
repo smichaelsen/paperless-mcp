@@ -168,7 +168,8 @@ export function closedSchemaRegistrar(
 export function registerAllTools(
   server: McpServer,
   api: PaperlessAPI,
-  policy: EffectiveToolPolicy
+  policy: EffectiveToolPolicy,
+  browserUrl?: URL
 ): string[] {
   const registered: string[] = [];
   // The tool modules only ever call `server.tool(...)`; one of them declares
@@ -178,7 +179,7 @@ export function registerAllTools(
     policy,
     registered
   ) as unknown as McpServer;
-  registerDocumentTools(registrar, api);
+  registerDocumentTools(registrar, api, browserUrl);
   registerTagTools(registrar, api);
   registerCorrespondentTools(registrar, api);
   registerDocumentTypeTools(registrar, api);

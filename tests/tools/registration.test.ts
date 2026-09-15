@@ -12,6 +12,7 @@ const EXPECTED_TOOLS = [
   "update_document",
   "search_documents",
   "download_document",
+  "get_document_download_link",
   "list_tags",
   "get_tag",
   "create_tag",
@@ -28,9 +29,12 @@ const EXPECTED_TOOLS = [
   "bulk_edit_document_types",
 ];
 
-function registerAll(api: unknown) {
+function registerAll(
+  api: unknown,
+  browserUrl = new URL("https://browser.example")
+) {
   const fake = createFakeServer();
-  registerDocumentTools(fake.server, api);
+  registerDocumentTools(fake.server, api, browserUrl);
   registerTagTools(fake.server, api);
   registerCorrespondentTools(fake.server, api);
   registerDocumentTypeTools(fake.server, api);
@@ -48,6 +52,7 @@ const SMOKE_ARGS: Record<string, Record<string, unknown>> = {
   update_document: { id: 1, title: "Synthetic" },
   search_documents: { query: "synthetic" },
   download_document: { id: 1 },
+  get_document_download_link: { id: 1 },
   list_tags: {},
   get_tag: { id: 1 },
   create_tag: { name: "synthetic" },
@@ -385,5 +390,78 @@ describe("handler behaviour", () => {
 
     const result = await fake.get("download_document").handler({ id: 7 }, {});
     expect(JSON.parse(result.content[0].text).filename).toBe("document-7");
+  });
+
+  it("returns an archived browser link only after checking document access", async () => {
+    const stub = createApiStub({
+      getDocument: async () => ({ id: 7, title: "not returned" }),
+    });
+    const fake = registerAll(
+      stub.api,
+      new URL("https://paperless.example/sub-path/")
+    );
+
+    const result = await fake
+      .get("get_document_download_link")
+      .handler({ id: 7 }, {});
+
+    expect(stub.calls).toEqual([{ method: "getDocument", args: [7] }]);
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      url: "https://paperless.example/sub-path/api/documents/7/download/",
+      original: false,
+      requires_browser_session: true,
+    });
+    expect(result.content[0].text).not.toContain("not returned");
+  });
+
+  it("returns the original browser link when requested", async () => {
+    const fake = registerAll(
+      createApiStub().api,
+      new URL("https://paperless.example")
+    );
+
+    const result = await fake
+      .get("get_document_download_link")
+      .handler({ id: 7, original: true }, {});
+
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      url: "https://paperless.example/api/documents/7/download/?original=true",
+      original: true,
+      requires_browser_session: true,
+    });
+  });
+
+  it("does not return a link when Paperless denies document access", async () => {
+    const denied = new Error("HTTP error! status: 404");
+    const fake = registerAll(
+      createApiStub({
+        getDocument: async () => {
+          throw denied;
+        },
+      }).api,
+      new URL("https://paperless.example")
+    );
+
+    await expect(
+      fake.get("get_document_download_link").handler({ id: 7 }, {})
+    ).rejects.toBe(denied);
+  });
+
+  it("fails safely without falling back to the API URL", async () => {
+    const internalUrl = "http://paperless.internal:8000";
+    const stub = createApiStub();
+    const fake = createFakeServer();
+    registerDocumentTools(fake.server, stub.api);
+
+    let error: unknown;
+    try {
+      await fake.get("get_document_download_link").handler({ id: 7 }, {});
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(String(error)).toContain("PAPERLESS_BROWSER_URL");
+    expect(String(error)).not.toContain(internalUrl);
+    expect(stub.calls).toEqual([]);
   });
 });
