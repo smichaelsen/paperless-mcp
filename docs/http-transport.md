@@ -113,6 +113,7 @@ concurrent requests share a single in-flight probe. Without that, an unauthentic
 endpoint would be an amplifier: one cheap request here would mean one authenticated
 request to Paperless, and anyone who could reach the port could use this server to
 hammer it. The shorter failure TTL is so that a recovering Paperless is picked up
-quickly. The upstream check itself is the cheapest authenticated call there is — the
-API root — with a 5 s deadline, and its result is reduced to a single bit before it
+quickly. The upstream check calls `/api/profile/`, an authenticated endpoint available
+to every active account that supports the same API version negotiation as tool
+requests. It has a 5 s deadline, and its result is reduced to a single bit before it
 reaches the response.

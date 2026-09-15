@@ -218,6 +218,23 @@ describe("PaperlessAPI.request — unsupported API version", () => {
 });
 
 describe("PaperlessAPI — endpoint wiring", () => {
+  it("probes readiness through the versioned profile endpoint", async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ username: "reader" }));
+    const controller = new AbortController();
+
+    await expect(
+      api().probeReadiness(controller.signal)
+    ).resolves.toBeUndefined();
+
+    const call = fetchMock.only();
+    expect(call.url).toBe(`${BASE_URL}/api/profile/`);
+    expect(call.init.signal).toBe(controller.signal);
+    expect(fetchMock.headerOf(call, "authorization")).toBe(`Token ${TOKEN}`);
+    expect(fetchMock.headerOf(call, "accept")).toBe(
+      `application/json; version=${REQUESTED_API_VERSION}`
+    );
+  });
+
   it("posts document bulk edits to /api/documents/bulk_edit/", async () => {
     const fetchMock = mockFetch(() => jsonResponse({ result: "OK" }));
 

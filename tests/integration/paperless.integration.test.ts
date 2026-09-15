@@ -192,6 +192,15 @@ describe.skipIf(!enabled)("Paperless-ngx integration", () => {
   });
 
   describe("API version negotiation", () => {
+    it("serves the endpoint used by the readiness probe", async () => {
+      // Exercise the production probe method, not a copied raw request. This
+      // keeps the live assertion tied to whatever `/readyz` actually asks and
+      // catches endpoints that reject the client's versioned Accept header.
+      await expect(
+        api.probeReadiness(new AbortController().signal)
+      ).resolves.toBeUndefined();
+    });
+
     it("serves the API version this client requests, and says which it offers", async () => {
       const response = await rawRequest("/documents/?page_size=1");
 
