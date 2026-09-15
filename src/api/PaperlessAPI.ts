@@ -126,6 +126,18 @@ export class PaperlessAPI {
     return response.json();
   }
 
+  /**
+   * Check that Paperless is reachable through the same authenticated,
+   * version-negotiated request path used by the MCP tools.
+   *
+   * `/profile/` is available to every active account. The API root is not a
+   * suitable substitute: Paperless-ngx 3.1.3 rejects version negotiation on
+   * that endpoint even while its resource endpoints remain healthy.
+   */
+  async probeReadiness(signal: AbortSignal): Promise<void> {
+    await this.request("/profile/", { signal });
+  }
+
   // Document operations
   async bulkEditDocuments(documents, method, parameters = {}) {
     return this.request("/documents/bulk_edit/", {
