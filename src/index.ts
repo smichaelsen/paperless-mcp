@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { PaperlessAPI } from "./api/PaperlessAPI";
+import { resolvePaperlessBrowserUrl } from "./config/browserUrl";
 import {
   resolvePaperlessToken,
   TOKEN_ENV,
@@ -65,6 +66,7 @@ async function main() {
     toolAccess,
     resolveConfiguredToolAllowlists(process.env, args)
   );
+  const browserUrl = resolvePaperlessBrowserUrl(process.env);
 
   let baseUrl: string | undefined;
   let token: string | undefined;
@@ -118,7 +120,7 @@ async function main() {
   const api = new PaperlessAPI(baseUrl, token);
   const createServer = (): McpServer => {
     const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-    registerAllTools(server, api, toolPolicy);
+    registerAllTools(server, api, toolPolicy, browserUrl);
     return server;
   };
 

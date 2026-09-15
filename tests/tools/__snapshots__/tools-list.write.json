@@ -306,6 +306,37 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
+    "description": "Create a browser-session download link for a document. Show the returned URL to the user as a clickable link; do not fetch it with the model. The browser must be able to reach the separately configured browser-facing Paperless URL and will use the user's existing Paperless session. No document bytes or credentials are included in the MCP response.",
+    "execution": {
+      "taskSupport": "forbidden"
+    },
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Document ID to link. Get this from search_documents or get_document results.",
+          "type": "number"
+        },
+        "original": {
+          "description": "Whether to link to the original uploaded file (true) or the processed/archived version (false, default).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "get_document_download_link"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
     "description": "Retrieve a single document type by its ID, including its name and matching rules. Useful for resolving a document type name from an ID referenced by a document when it is not on the first page of list_document_types.",
     "execution": {
       "taskSupport": "forbidden"

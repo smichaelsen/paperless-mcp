@@ -94,6 +94,7 @@ describe("effective tool policy", () => {
       "download_document",
       "get_correspondent",
       "get_document",
+      "get_document_download_link",
       "get_document_type",
       "get_tag",
       "list_correspondents",

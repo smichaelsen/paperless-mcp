@@ -35,6 +35,7 @@ const READ_TOOLS = [
   "download_document",
   "get_correspondent",
   "get_document",
+  "get_document_download_link",
   "get_document_type",
   "get_tag",
   "list_correspondents",
@@ -102,6 +103,7 @@ const EXPECTED_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_document: reads,
   search_documents: reads,
   download_document: reads,
+  get_document_download_link: reads,
   list_tags: reads,
   get_tag: reads,
   list_correspondents: reads,
@@ -190,6 +192,17 @@ describe("tool surface per mode", () => {
 });
 
 describe("exact tool allowlist", () => {
+  it("can select the browser download link as a read-only tool", async () => {
+    const policy = resolveEffectiveToolPolicy(MODES["read-only"], {
+      enabledTools: ["get_document_download_link"],
+      bulkEditMethods: undefined,
+    });
+
+    expect(await toolNamesWithPolicy(policy)).toEqual([
+      "get_document_download_link",
+    ]);
+  });
+
   it("advertises only selected names that the mode permits", async () => {
     const policy = resolveEffectiveToolPolicy(MODES.write, {
       enabledTools: ["get_document", "update_document", "delete_tag"],
